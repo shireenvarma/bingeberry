@@ -425,6 +425,8 @@ textarea.form-control { resize:vertical;min-height:70px; }
         <button class="nav-item" onclick="showPage('month')"><span class="nav-dot" style="background:var(--green)"></span>This Month</button>
         <button class="nav-item" onclick="showPage('monthly')"><span class="nav-dot" style="background:var(--amber)"></span>Monthly Checklist</button>
         <button class="nav-item" id="nav-goals-item" onclick="showPage('goals')"><span class="nav-dot" style="background:var(--lime)"></span>Business Goals</button>
+        <button class="nav-item" id="nav-guidelines-item" onclick="showPage('guidelines')"><span class="nav-dot" style="background:var(--pink)"></span>Brand Guidelines</button>
+        <button class="nav-item" onclick="showPage('focus')"><span class="nav-dot" style="background:var(--amber)"></span>Focus Timer</button>
         <button class="nav-item" onclick="showPage('calendar')"><span class="nav-dot" style="background:var(--green)"></span>Calendar</button>
       </div>
       <div class="nav-section">
@@ -464,11 +466,11 @@ textarea.form-control { resize:vertical;min-height:70px; }
           <div class="team-updates-grid" id="team-updates-grid"></div>
         </div>
         <div class="sh"><h3>Overdue</h3><div class="sh-line"></div></div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Client</th><th>Type</th><th>Assigned</th><th>Due</th><th>Status</th></tr></thead><tbody id="dash-overdue"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Status</th></tr></thead><tbody id="dash-overdue"></tbody></table></div>
         <div class="sh"><h3>Due This Week</h3><div class="sh-line"></div></div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Client</th><th>Type</th><th>Assigned</th><th>Due</th><th>Status</th></tr></thead><tbody id="dash-week"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Status</th></tr></thead><tbody id="dash-week"></tbody></table></div>
         <div class="sh"><h3>All Active</h3><div class="sh-line"></div></div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Client</th><th>Type</th><th>Assigned</th><th>Due</th><th>Status</th></tr></thead><tbody id="dash-all"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Status</th></tr></thead><tbody id="dash-all"></tbody></table></div>
       </div>
 
       <!-- ── TASKS ── -->
@@ -478,7 +480,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
           <button class="btn btn-primary" onclick="openTaskModal()">+ Add Task</button>
         </div>
         <div class="filter-bar" id="filter-bar"></div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Client</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody id="main-task-body"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody id="main-task-body"></tbody></table></div>
       </div>
 
       <!-- ── WEEK ── -->
@@ -486,14 +488,14 @@ textarea.form-control { resize:vertical;min-height:70px; }
         <div class="page-header"><h2>This Week</h2><button class="btn btn-primary" onclick="openTaskModal()">+ Add Task</button></div>
         <div class="panel-note">Weekly tasks stay editable here so you can update status and priority without leaving the planner.</div>
         <div class="week-grid" id="week-grid"></div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Client</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody id="week-task-body"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody id="week-task-body"></tbody></table></div>
       </div>
 
       <!-- ── MONTH ── -->
       <div class="page" id="page-month">
         <div class="page-header"><h2 id="month-page-title">This Month</h2><button class="btn btn-primary" onclick="openTaskModal()">+ Add Task</button></div>
         <div class="panel-note">Use the month controls in the top bar to move across months and keep the task plan updated month on month.</div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Client</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody id="month-task-body"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody id="month-task-body"></tbody></table></div>
       </div>
 
       <!-- ── MONTHLY CHECKLIST ── -->
@@ -506,6 +508,16 @@ textarea.form-control { resize:vertical;min-height:70px; }
       <div class="page" id="page-goals">
         <div class="page-header"><h2>Business Goals</h2><button class="btn btn-primary" onclick="openGoalModal()">+ Add Goal</button></div>
         <div class="goals-grid" id="goals-grid"></div>
+      </div>
+
+      <div class="page" id="page-guidelines">
+        <div class="page-header"><h2>Brand Values & Guidelines</h2></div>
+        <div class="brief-grid" id="guidelines-grid"></div>
+      </div>
+
+      <div class="page" id="page-focus">
+        <div class="page-header"><h2>Focus Timer</h2></div>
+        <div id="focus-panel"></div>
       </div>
 
       <!-- ── CALENDAR ── -->
@@ -538,7 +550,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
       <!-- ── RECURRING ── -->
       <div class="page" id="page-recurring">
         <div class="page-header"><h2>Recurring Task Templates</h2><button class="btn btn-primary" onclick="openRecurringModal()">+ Add Template</button></div>
-        <p style="font-size:13px;color:var(--muted);margin-bottom:20px;">These tasks auto-generate each month. Edit the due day — tasks spawn on the 1st of each month for that month's deadline.</p>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:20px;">These templates can generate daily, weekly, or monthly recurring tasks and support multiple brands, assignees, and reminder times.</p>
         <div id="recurring-list"></div>
       </div>
 
@@ -595,7 +607,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
       <div class="page" id="page-mywork">
         <div class="page-header"><h2>My Work</h2></div>
         <div class="sh"><h3>My Assigned Tasks</h3><div class="sh-line"></div></div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Client</th><th>Type</th><th>Due</th><th>Status</th></tr></thead><tbody id="mywork-body"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Brands</th><th>Type</th><th>Due</th><th>Status</th><th></th></tr></thead><tbody id="mywork-body"></tbody></table></div>
         <div class="sh" style="margin-top:20px"><h3>Client Briefs</h3><div class="sh-line"></div></div>
         <div class="brief-grid" id="brief-grid"></div>
       </div>
@@ -623,20 +635,18 @@ textarea.form-control { resize:vertical;min-height:70px; }
         <label class="form-label">Brief / Objective</label>
         <textarea class="form-control" id="t-brief" placeholder="What needs to be done? Goals, context..."></textarea>
       </div>
+      <div class="form-group">
+        <label class="form-label">Brands</label>
+        <div id="t-client-list" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+      </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">Client *</label>
-          <select class="form-control" id="t-client"></select>
+          <label class="form-label">Type *</label>
+          <input class="form-control" id="t-type" list="client-type-options" placeholder="Retainer / Project / Custom">
         </div>
         <div class="form-group">
-          <label class="form-label">Type *</label>
-          <select class="form-control" id="t-type">
-            <option value="Retainer">Retainer</option>
-            <option value="Adhoc">Adhoc</option>
-            <option value="Branding">Branding Project</option>
-            <option value="Personal">Personal Brand</option>
-            <option value="Goals">Goals</option>
-          </select>
+          <label class="form-label">Start Date</label>
+          <input class="form-control" id="t-start" type="date">
         </div>
       </div>
       <div class="form-row">
@@ -656,7 +666,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Assigned To</label>
-          <select class="form-control" id="t-assigned"></select>
+          <div id="t-assigned-list" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
         </div>
         <div class="form-group">
           <label class="form-label">Status</label>
@@ -669,29 +679,34 @@ textarea.form-control { resize:vertical;min-height:70px; }
           </select>
         </div>
       </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Repeat</label>
+          <select class="form-control" id="t-repeat-type">
+            <option value="none">One-time task</option>
+            <option value="daily">Repeat daily</option>
+            <option value="weekly">Repeat weekly</option>
+            <option value="monthly">Repeat monthly</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Half of Day</label>
+          <select class="form-control" id="t-slot">
+            <option value="any">Anytime</option>
+            <option value="first_half">First Half</option>
+            <option value="second_half">Second Half</option>
+          </select>
+        </div>
+      </div>
       <div class="form-group">
         <label class="form-label">References / Data Links</label>
         <input class="form-control" id="t-refs" placeholder="https://drive.google.com/... or paste links">
         <div class="form-hint">Separate multiple links with a comma</div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Send Email Reminder</label>
-          <select class="form-control" id="t-remind">
-            <option value="none">No reminder</option>
-            <option value="1">1 day before</option>
-            <option value="2">2 days before</option>
-            <option value="3">3 days before</option>
-            <option value="7">1 week before</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Recurring (monthly)</label>
-          <select class="form-control" id="t-recurring">
-            <option value="no">One-time task</option>
-            <option value="yes">Repeat monthly</option>
-          </select>
-        </div>
+      <div class="form-group">
+        <label class="form-label">Reminders</label>
+        <div id="task-reminders-list"></div>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="addReminderRow()">+ Add Reminder</button>
       </div>
     </div>
     <div class="modal-footer">
@@ -717,12 +732,20 @@ textarea.form-control { resize:vertical;min-height:70px; }
         </div>
         <div class="form-group">
           <label class="form-label">Type</label>
-          <select class="form-control" id="c-type">
-            <option value="Retainer">Social Media Retainer</option>
-            <option value="Branding">Branding Project</option>
-            <option value="Adhoc">Adhoc / One-off</option>
-            <option value="Personal">Personal / Agency</option>
+          <input class="form-control" id="c-type" list="client-type-options" placeholder="Retainer / Project / Custom">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Billing Model</label>
+          <select class="form-control" id="c-billing-model">
+            <option value="retainer">Retainer</option>
+            <option value="project">Project</option>
           </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Category</label>
+          <input class="form-control" id="c-category" placeholder="e.g. Fashion, F&B, Performance">
         </div>
       </div>
       <div class="form-row">
@@ -740,9 +763,30 @@ textarea.form-control { resize:vertical;min-height:70px; }
         <textarea class="form-control" id="c-brief" placeholder="What is this brand? What are we trying to achieve?"></textarea>
       </div>
       <div class="form-group">
+        <label class="form-label">Brand Values & Guidelines</label>
+        <textarea class="form-control" id="c-guidelines" placeholder="Tone, values, do/don't, messaging guardrails..."></textarea>
+      </div>
+      <div class="form-group">
         <label class="form-label">Monthly Strategy Due Day</label>
         <input class="form-control" id="c-strat-day" type="number" min="1" max="28" placeholder="e.g. 20" value="20">
         <div class="form-hint">Strategy will be flagged due on this day each month</div>
+      </div>
+      <div id="client-project-fields" style="display:none">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Project Start Date</label>
+            <input class="form-control" id="c-project-start" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Project End Date</label>
+            <input class="form-control" id="c-project-end" type="date">
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Project Timeline</label>
+          <div id="client-timeline-list" style="display:grid;gap:12px"></div>
+          <button class="btn btn-ghost btn-sm" type="button" onclick="addTimelineRow()">+ Add Milestone</button>
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">Drive / References Link</label>
@@ -757,8 +801,18 @@ textarea.form-control { resize:vertical;min-height:70px; }
         <input class="form-control" id="c-email" placeholder="client@email.com">
       </div>
       <div class="form-group">
-        <label class="form-label">Monthly Retainer Fee (₹)</label>
+        <label class="form-label" id="c-fee-label">Monthly Retainer Fee (₹)</label>
         <input class="form-control" id="c-fee" type="number" placeholder="e.g. 50000">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">On-paper Revenue (₹)</label>
+          <input class="form-control" id="c-paper-fee" type="number" placeholder="Expected amount">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Actual Revenue (₹)</label>
+          <input class="form-control" id="c-actual-fee" type="number" placeholder="Real amount received">
+        </div>
       </div>
     </div>
     <div class="modal-footer">
@@ -863,35 +917,44 @@ textarea.form-control { resize:vertical;min-height:70px; }
 <div class="overlay" id="recurring-modal">
   <div class="modal">
     <div class="modal-head">
-      <span class="modal-title">Add Recurring Template</span>
+      <span class="modal-title" id="recurring-modal-title">Add Recurring Template</span>
       <button class="modal-close" onclick="closeModal('recurring-modal')">×</button>
     </div>
     <div class="modal-body">
+      <input type="hidden" id="edit-recurring-id">
       <div class="form-group">
         <label class="form-label">Task Name *</label>
         <input class="form-control" id="r-name" placeholder="e.g. Monthly Strategy for BINGE">
       </div>
+      <div class="form-group">
+        <label class="form-label">Brands</label>
+        <div id="r-client-list" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+      </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">Client *</label>
-          <select class="form-control" id="r-client"></select>
+          <label class="form-label">Type</label>
+          <input class="form-control" id="r-type" list="client-type-options" placeholder="Retainer / Project / Custom">
         </div>
         <div class="form-group">
-          <label class="form-label">Type</label>
-          <select class="form-control" id="r-type">
-            <option value="Retainer">Retainer</option>
-            <option value="Adhoc">Adhoc</option>
-            <option value="Branding">Branding</option>
-            <option value="Personal">Personal</option>
+          <label class="form-label">Repeat</label>
+          <select class="form-control" id="r-repeat-type">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly" selected>Monthly</option>
           </select>
         </div>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">Due Day of Month</label>
-          <input class="form-control" id="r-day" type="number" min="1" max="28" placeholder="e.g. 20">
-          <div class="form-hint">Task auto-generates due on this day</div>
+          <label class="form-label">Anchor Date</label>
+          <input class="form-control" id="r-anchor" type="date">
         </div>
+        <div class="form-group">
+          <label class="form-label">Start Date</label>
+          <input class="form-control" id="r-start" type="date">
+        </div>
+      </div>
+      <div class="form-row">
         <div class="form-group">
           <label class="form-label">Priority</label>
           <select class="form-control" id="r-priority">
@@ -900,10 +963,23 @@ textarea.form-control { resize:vertical;min-height:70px; }
             <option value="Low">Low</option>
           </select>
         </div>
+        <div class="form-group">
+          <label class="form-label">Half of Day</label>
+          <select class="form-control" id="r-slot">
+            <option value="any">Anytime</option>
+            <option value="first_half">First Half</option>
+            <option value="second_half">Second Half</option>
+          </select>
+        </div>
       </div>
       <div class="form-group">
-        <label class="form-label">Default Assignee</label>
-        <select class="form-control" id="r-assigned"></select>
+        <label class="form-label">Default Assignees</label>
+        <div id="r-assigned-list" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Reminders</label>
+        <div id="recurring-reminders-list"></div>
+        <button class="btn btn-ghost btn-sm" type="button" onclick="addReminderRow({ daysBefore: 1, time: '10:00' }, 'recurring-reminders-list')">+ Add Reminder</button>
       </div>
       <div class="form-group">
         <label class="form-label">Brief / Notes</label>
@@ -919,6 +995,15 @@ textarea.form-control { resize:vertical;min-height:70px; }
 
 <!-- Toast container -->
 <div id="toast-container"></div>
+
+<datalist id="client-type-options">
+  <option value="Retainer"></option>
+  <option value="Project"></option>
+  <option value="Branding"></option>
+  <option value="Adhoc"></option>
+  <option value="Personal"></option>
+  <option value="Goals"></option>
+</datalist>
 
 <!-- EmailJS -->
 

@@ -58,8 +58,16 @@ const DEFAULT_CHECKLIST_DEF = {
   ],
 };
 
-const EMPTY_SETTINGS = { ejsService: '', ejsTemplate: '', ejsPubkey: '' };
+const EMPTY_SETTINGS = {
+  ejsService: '',
+  ejsTemplate: '',
+  ejsPubkey: '',
+  focusPresets: { focusMinutes: 50, breakMinutes: 10 },
+  focusSessions: {},
+};
 const USER_COLORS = ['#c8f065', '#6eb5ff', '#b48fff', '#ff7f6e', '#5fce8a', '#ffb547', '#ff6eb4'];
+const DEFAULT_CLIENT_TYPES = ['Retainer', 'Project', 'Branding', 'Adhoc', 'Personal', 'Goals'];
+const DEFAULT_REMINDER_TIME = '10:00';
 
 let DB = {
   users: [],
@@ -77,6 +85,10 @@ let currentPage = 'dashboard';
 let activeFilters = { client: 'All', type: 'All', status: 'All', assigned: 'All' };
 let authMode = 'signin';
 let goalMetricCount = 0;
+let recurringMetricCount = 0;
+let taskReminderCount = 0;
+let clientTimelineCount = 0;
+let focusTimerState = { mode: 'focus', running: false, endsAt: 0, remainingMs: 50 * 60 * 1000, intervalId: null };
 
 function byId(id) {
   return document.getElementById(id);
@@ -90,6 +102,10 @@ function mdate(day) {
 function monthDate(day, base = VIEW_DATE) {
   const d = new Date(base.getFullYear(), base.getMonth(), day);
   return d.toISOString().split('T')[0];
+}
+
+function dateInputValue(value, fallback = todayStr) {
+  return value || fallback;
 }
 
 function monthLabel(base = VIEW_DATE) {
@@ -133,6 +149,14 @@ function newId(prefix) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function unique(values = []) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function clampDay(day) {
+  return Math.max(1, Math.min(28, parseInt(day, 10) || 1));
+}
+
 function showToast(msg, type = 'success') {
   const container = byId('toast-container');
   if (!container) return;
@@ -154,7 +178,7 @@ function setAuthMessage(msg = '', type = 'error') {
 }
 
 function getClient(id) {
-  return DB.clients.find((c) => c.id === id) || { name: 'Unknown', color: '#888', type: '' };
+  return DB.clients.find((c) => c.id === id) || { name: 'Unknown', color: '#888', type: '', category: '', guidelines: '' };
 }
 
 function getUser(id) {
@@ -179,8 +203,8 @@ function canEdit() {
 
 function visibleClients() {
   if (!CURRENT_USER) return [];
-  if (isAdmin()) return [...DB.clients];
-  return DB.clients.filter((client) => CURRENT_USER.clients.includes(client.id));
+  if (isAdmin()) return [...DB.clients].sort((a, b) => a.sortOrder - b.sortOrder);
+  return DB.clients.filter((client) => CURRENT_USER.clients.includes(client.id)).sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
 function visibleTasks() {
@@ -188,19 +212,23 @@ function visibleTasks() {
   if (CURRENT_USER.role === 'admin') return [...DB.tasks];
   if (CURRENT_USER.role === 'manager') {
     return DB.tasks.filter(
-      (task) => task.assigned === CURRENT_USER.id || CURRENT_USER.clients.includes(task.client),
+      (task) => taskAssignedTo(task, CURRENT_USER.id) || getClientIds(task).some((id) => CURRENT_USER.clients.includes(id)),
     );
   }
-  return DB.tasks.filter((task) => task.assigned === CURRENT_USER.id);
+  return DB.tasks.filter((task) => taskAssignedTo(task, CURRENT_USER.id));
 }
 
 function canManageTask(task) {
   if (!CURRENT_USER || !task) return false;
-  return CURRENT_USER.role === 'admin' || CURRENT_USER.role === 'manager' || task.assigned === CURRENT_USER.id;
+  return CURRENT_USER.role === 'admin' || CURRENT_USER.role === 'manager' || taskAssignedTo(task, CURRENT_USER.id);
 }
 
 function canEditTaskDetails() {
   return Boolean(CURRENT_USER && (CURRENT_USER.role === 'admin' || CURRENT_USER.role === 'manager'));
+}
+
+function canCreateTask() {
+  return Boolean(CURRENT_USER);
 }
 
 function touchTask(task) {
@@ -221,7 +249,7 @@ function statusCycle(s) {
 }
 
 function typeClass(t) {
-  return { Retainer: 'b-retainer', Adhoc: 'b-adhoc', Branding: 'b-branding', Personal: 'b-personal', Goals: 'b-goals' }[t] || 'b-adhoc';
+  return { Retainer: 'b-retainer', Project: 'b-branding', Branding: 'b-branding', Adhoc: 'b-adhoc', Personal: 'b-personal', Goals: 'b-goals' }[t] || 'b-adhoc';
 }
 
 function prioClass(p) {
@@ -253,19 +281,161 @@ function normalizeChecklistValue(value, fallback = {}) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
 }
 
+function normalizeIdList(values = []) {
+  return unique(Array.isArray(values) ? values : []);
+}
+
+function normalizeReminderList(values = []) {
+  return (Array.isArray(values) ? values : [])
+    .map((entry) => {
+      if (typeof entry === 'number') return { daysBefore: entry, time: DEFAULT_REMINDER_TIME };
+      return {
+        daysBefore: Math.max(0, parseInt(entry?.daysBefore, 10) || 0),
+        time: String(entry?.time || DEFAULT_REMINDER_TIME).slice(0, 5),
+      };
+    })
+    .filter((entry) => Number.isFinite(entry.daysBefore))
+    .sort((a, b) => a.daysBefore - b.daysBefore || a.time.localeCompare(b.time));
+}
+
+function normalizeTimelineItem(item = {}) {
+  return {
+    id: item.id || newId('tl'),
+    title: item.title || '',
+    date: item.date || todayStr,
+    brief: item.brief || '',
+    assignedIds: normalizeIdList(item.assignedIds || item.assigned_user_ids || []),
+  };
+}
+
+function getClientIds(task) {
+  if (Array.isArray(task?.clientIds) && task.clientIds.length) return normalizeIdList(task.clientIds);
+  return task?.client ? [task.client] : [];
+}
+
+function getAssignedIds(task) {
+  if (Array.isArray(task?.assignedIds) && task.assignedIds.length) return normalizeIdList(task.assignedIds);
+  return task?.assigned ? [task.assigned] : [];
+}
+
+function getReminderList(task) {
+  if (Array.isArray(task?.reminders)) return normalizeReminderList(task.reminders);
+  if (task?.remind && task.remind !== 'none') return normalizeReminderList([{ daysBefore: task.remind, time: DEFAULT_REMINDER_TIME }]);
+  return [];
+}
+
+function taskMatchesClient(task, clientId) {
+  return getClientIds(task).includes(clientId);
+}
+
+function taskAssignedTo(task, userId) {
+  return getAssignedIds(task).includes(userId);
+}
+
+function getPrimaryClientId(task) {
+  return getClientIds(task)[0] || '';
+}
+
+function getTaskClientNames(task) {
+  const names = getClientIds(task).map((id) => getClient(id).name).filter(Boolean);
+  return names.length ? names.join(', ') : 'No brand';
+}
+
+function getTaskAssigneeNames(task) {
+  const names = getAssignedIds(task).map((id) => getUser(id).name).filter(Boolean);
+  return names.length ? names.join(', ') : 'Unassigned';
+}
+
+function isProjectType(type, billingModel = '') {
+  return billingModel === 'project' || ['Project', 'Branding', 'Adhoc'].includes(type);
+}
+
+function clientRevenueLabel(client, variant) {
+  const project = isProjectType(client?.type, client?.billingModel);
+  if (variant === 'paper') return project ? 'On-paper Project Value' : 'On-paper Monthly Revenue';
+  return project ? 'Actual Received Value' : 'Actual Monthly Revenue';
+}
+
+function taskRepeatLabel(task) {
+  return { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' }[task.repeatType] || '';
+}
+
+function slotLabel(slot) {
+  return { any: 'Anytime', first_half: 'First Half', second_half: 'Second Half' }[slot] || 'Anytime';
+}
+
+function categoryOptions() {
+  return unique(DB.clients.map((client) => client.category).filter(Boolean));
+}
+
+function clientTypeOptions() {
+  return unique([...DEFAULT_CLIENT_TYPES, ...DB.clients.map((client) => client.type).filter(Boolean), ...DB.tasks.map((task) => task.type).filter(Boolean)]);
+}
+
+function getDueDateForTemplate(template, baseDate = TODAY) {
+  const anchor = new Date(`${template.anchorDate || template.due || todayStr}T00:00:00`);
+  const repeatType = template.repeatType || 'monthly';
+  if (repeatType === 'daily') return baseDate.toISOString().split('T')[0];
+  if (repeatType === 'weekly') {
+    const target = new Date(baseDate);
+    const diff = anchor.getDay() - target.getDay();
+    target.setDate(target.getDate() + diff);
+    return target.toISOString().split('T')[0];
+  }
+  const targetDay = Math.min(anchor.getDate(), 28);
+  return monthDate(targetDay, new Date(baseDate.getFullYear(), baseDate.getMonth(), 1));
+}
+
+function focusPrefsKey() {
+  return `bingeberry-focus-prefs-${CURRENT_USER?.id || 'guest'}`;
+}
+
+function focusSessionsKey() {
+  return `bingeberry-focus-sessions-${CURRENT_USER?.id || 'guest'}`;
+}
+
+function getFocusPrefs() {
+  try {
+    return { ...EMPTY_SETTINGS.focusPresets, ...JSON.parse(localStorage.getItem(focusPrefsKey()) || '{}') };
+  } catch {
+    return { ...EMPTY_SETTINGS.focusPresets };
+  }
+}
+
+function setFocusPrefs(value) {
+  localStorage.setItem(focusPrefsKey(), JSON.stringify(value));
+}
+
+function getFocusSessions() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(focusSessionsKey()) || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function setFocusSessions(value) {
+  localStorage.setItem(focusSessionsKey(), JSON.stringify(value));
+}
+
 function syncRevenueGoal() {
-  const current = DB.clients.reduce((sum, client) => sum + (parseFloat(client.fee) || 0), 0);
-  const suggestedTarget = current > 0 ? Math.ceil(current / 50000) * 50000 : 100000;
+  const onPaper = DB.clients.reduce((sum, client) => sum + (parseFloat(client.paperFee) || parseFloat(client.fee) || 0), 0);
+  const actual = DB.clients.reduce((sum, client) => sum + (parseFloat(client.actualFee) || parseFloat(client.fee) || 0), 0);
+  const suggestedTarget = Math.max(onPaper, actual, 100000);
   let goal = DB.goals.find((item) => item.autoType === 'monthlyRevenue');
 
   if (!goal) {
     goal = {
       id: 'g-revenue',
       title: 'Monthly Revenue',
-      desc: 'Auto-calculated from active project values and monthly retainers.',
+      desc: 'Auto-calculated from on-paper and actual client revenue.',
       color: '#5fce8a',
       autoType: 'monthlyRevenue',
-      metrics: [{ label: 'Booked Revenue', current, target: suggestedTarget, unit: 'currency' }],
+      metrics: [
+        { label: 'On Paper', current: onPaper, target: suggestedTarget, unit: 'currency' },
+        { label: 'Actual', current: actual, target: suggestedTarget, unit: 'currency' },
+      ],
     };
     DB.goals.unshift(goal);
     return;
@@ -273,51 +443,88 @@ function syncRevenueGoal() {
 
   const existingTarget = parseFloat(goal.metrics?.[0]?.target) || 0;
   goal.title = 'Monthly Revenue';
-  goal.desc = 'Auto-calculated from active project values and monthly retainers.';
+  goal.desc = 'Auto-calculated from on-paper and actual client revenue.';
   goal.color = goal.color || '#5fce8a';
-  goal.metrics = [{ label: 'Booked Revenue', current, target: Math.max(existingTarget, suggestedTarget), unit: 'currency' }];
+  goal.metrics = [
+    { label: 'On Paper', current: onPaper, target: Math.max(existingTarget, suggestedTarget), unit: 'currency' },
+    { label: 'Actual', current: actual, target: Math.max(existingTarget, suggestedTarget), unit: 'currency' },
+  ];
 }
 
 function mapTaskFromRow(row) {
+  const clientIds = normalizeIdList(row.client_ids || (row.client_id ? [row.client_id] : []));
+  const assignedIds = normalizeIdList(row.assigned_user_ids || (row.assigned_user_id ? [row.assigned_user_id] : []));
   return {
     id: row.id,
     name: row.name,
     brief: row.brief || '',
-    client: row.client_id,
+    client: clientIds[0] || row.client_id || '',
+    clientIds,
     type: row.type,
+    start: row.start_date || '',
     due: row.due_date,
     priority: row.priority,
+    slot: row.slot || 'any',
     status: row.status,
-    assigned: row.assigned_user_id || '',
+    assigned: assignedIds[0] || row.assigned_user_id || '',
+    assignedIds,
     refs: row.refs || '',
     remind: row.remind || 'none',
+    reminders: normalizeReminderList(row.reminders),
     recurring: row.recurring ? 'yes' : 'no',
+    repeatType: row.repeat_type || (row.recurring ? 'monthly' : 'none'),
     recurringTemplateId: row.recurring_template_id || '',
+    cleanupAfterDays: row.cleanup_after_days || 14,
+    sourceClientTimelineId: row.source_client_timeline_id || '',
+    autoGenerated: Boolean(row.auto_generated),
+    sortOrder: row.sort_order || 0,
     updatedAt: row.updated_at || new Date().toISOString(),
     updatedBy: row.updated_by || row.assigned_user_id || '',
   };
 }
 
 function mapTaskToRow(task) {
+  const clientIds = getClientIds(task);
+  const assignedIds = getAssignedIds(task);
+  const reminders = getReminderList(task);
   return {
     id: task.id,
     name: task.name,
     brief: task.brief,
-    client_id: task.client,
+    client_id: clientIds[0] || null,
+    client_ids: clientIds,
     type: task.type,
+    start_date: task.start || null,
     due_date: task.due,
     priority: task.priority,
+    slot: task.slot || 'any',
     status: task.status,
-    assigned_user_id: task.assigned || null,
+    assigned_user_id: assignedIds[0] || null,
+    assigned_user_ids: assignedIds,
     refs: task.refs || '',
-    remind: task.remind || 'none',
-    recurring: task.recurring === 'yes',
+    remind: reminders[0] ? String(reminders[0].daysBefore) : 'none',
+    reminders,
+    recurring: task.repeatType && task.repeatType !== 'none',
+    repeat_type: task.repeatType || 'none',
     recurring_template_id: task.recurringTemplateId || null,
+    cleanup_after_days: task.cleanupAfterDays || 14,
+    source_client_timeline_id: task.sourceClientTimelineId || null,
+    auto_generated: Boolean(task.autoGenerated),
+    sort_order: task.sortOrder || 0,
     updated_by: task.updatedBy || CURRENT_USER?.id || null,
   };
 }
 
+async function ensureSession() {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  if (!data.session?.user) throw new Error('Your session expired. Refresh the page and sign in again.');
+  return data.session;
+}
+
 async function upsertWorkspaceDoc(key, value) {
+  await ensureSession();
   const { error } = await supabase.from('workspace_documents').upsert({ key, value }, { onConflict: 'key' });
   if (error) throw error;
 }
@@ -381,14 +588,15 @@ async function ensureProfile(authUser) {
 }
 
 async function loadWorkspace() {
+  await ensureSession();
   const [profilesRes, assignmentsRes, clientsRes, tasksRes, docsRes] = await Promise.all([
     supabase
       .from('profiles')
       .select('id,email,full_name,username,role,color,calendar_url,email_reminders,permissions,created_at')
       .order('created_at', { ascending: true }),
     supabase.from('client_assignments').select('user_id,client_id'),
-    supabase.from('clients').select('*').order('name', { ascending: true }),
-    supabase.from('tasks').select('*').order('due_date', { ascending: true }),
+    supabase.from('clients').select('*').order('sort_order', { ascending: true }).order('name', { ascending: true }),
+    supabase.from('tasks').select('*').order('sort_order', { ascending: true }).order('due_date', { ascending: true }),
     supabase.from('workspace_documents').select('key,value'),
   ]);
 
@@ -421,24 +629,41 @@ async function loadWorkspace() {
     id: client.id,
     name: client.name,
     type: client.type,
+    billingModel: client.billing_model || 'retainer',
     industry: client.industry || '',
+    category: client.category || '',
     color: client.color || '#6eb5ff',
     brief: client.brief || '',
+    guidelines: client.guidelines || '',
     stratDay: client.strat_day || 20,
     drive: client.drive || '',
     contact: client.contact || '',
     email: client.email || '',
     fee: client.fee || 0,
-  }));
+    paperFee: client.paper_fee || client.fee || 0,
+    actualFee: client.actual_fee || client.fee || 0,
+    projectStartDate: client.project_start_date || '',
+    projectEndDate: client.project_end_date || '',
+    timeline: (Array.isArray(client.timeline) ? client.timeline : []).map(normalizeTimelineItem),
+    sortOrder: client.sort_order || 0,
+  })).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
 
-  DB.tasks = (tasksRes.data || []).map(mapTaskFromRow);
+  DB.tasks = (tasksRes.data || []).map(mapTaskFromRow).sort((a, b) => a.sortOrder - b.sortOrder || new Date(a.due) - new Date(b.due));
 
   const docs = Object.fromEntries((docsRes.data || []).map((doc) => [doc.key, doc.value]));
-  DB.recurring = Array.isArray(docs[DOC_KEYS.recurring]) ? docs[DOC_KEYS.recurring] : [];
+  DB.recurring = Array.isArray(docs[DOC_KEYS.recurring]) ? docs[DOC_KEYS.recurring].map((item) => ({
+    ...item,
+    clientIds: normalizeIdList(item.clientIds || (item.client ? [item.client] : [])),
+    assignedIds: normalizeIdList(item.assignedIds || (item.assigned ? [item.assigned] : [])),
+    reminders: normalizeReminderList(item.reminders || []),
+    repeatType: item.repeatType || 'monthly',
+    anchorDate: item.anchorDate || item.due || todayStr,
+    slot: item.slot || 'any',
+  })) : [];
   DB.goals = Array.isArray(docs[DOC_KEYS.goals]) ? docs[DOC_KEYS.goals] : [];
   DB.checklist = normalizeChecklistValue(docs[DOC_KEYS.checklistState], {});
   DB.checklistDef = normalizeChecklistValue(docs[DOC_KEYS.checklistDef], DEFAULT_CHECKLIST_DEF);
-  DB.settings = normalizeChecklistValue(docs[DOC_KEYS.settings], EMPTY_SETTINGS);
+  DB.settings = { ...EMPTY_SETTINGS, ...normalizeChecklistValue(docs[DOC_KEYS.settings], EMPTY_SETTINGS) };
 
   syncRevenueGoal();
   CURRENT_USER = DB.users.find((user) => user.id === CURRENT_USER?.id) || CURRENT_USER;
@@ -592,6 +817,8 @@ const PAGE_TITLES = {
   month: 'This Month',
   monthly: 'Monthly Checklist',
   goals: 'Business Goals',
+  guidelines: 'Brand Values & Guidelines',
+  focus: 'Focus Timer',
   calendar: 'Calendar',
   clients: 'Clients & Projects',
   team: 'Team Members',
@@ -670,7 +897,7 @@ function renderFilterBar() {
   const bar = byId('filter-bar');
   if (!bar) return;
   const clients = [{ id: 'All', name: 'All Clients' }, ...visibleClients()];
-  const types = ['All', 'Retainer', 'Adhoc', 'Branding', 'Personal', 'Goals'];
+  const types = ['All', ...clientTypeOptions()];
   const assignees = ['All', ...DB.users.map((user) => user.id)];
 
   bar.innerHTML = '';
@@ -723,12 +950,17 @@ function renderFilterBar() {
 
 function taskRow(task, cols = 'full', editable = true) {
   const isDone = task.status === 'done';
-  const client = getClient(task.client);
-  const user = getUser(task.assigned);
+  const primaryClient = getClient(getPrimaryClientId(task));
+  const assigneeIds = getAssignedIds(task);
+  const user = getUser(assigneeIds[0]);
+  const clientNames = getTaskClientNames(task);
+  const assigneeNames = getTaskAssigneeNames(task);
   const canManage = editable && canManageTask(task);
   const canEditDetails = editable && canEditTaskDetails(task);
   const editBtn = canEditDetails ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="editTask('${task.id}')" title="Edit">✏️</button>` : '';
   const delBtn = editable && canEditTaskDetails(task) ? `<button class="btn btn-danger btn-sm btn-icon" onclick="deleteTask('${task.id}')" title="Delete">×</button>` : '';
+  const moveUpBtn = cols === 'team' && canManage ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="moveMyTask('${task.id}',-1)" title="Move up">↑</button>` : '';
+  const moveDownBtn = cols === 'team' && canManage ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="moveMyTask('${task.id}',1)" title="Move down">↓</button>` : '';
   const refsHtml = task.refs
     ? task.refs
         .split(',')
@@ -745,24 +977,25 @@ function taskRow(task, cols = 'full', editable = true) {
       : canManage
         ? `<button class="priority-chip ${priorityChipClass(task.priority)}" onclick="cyclePriority('${task.id}')"><span class="prio ${prioClass(task.priority)}"></span>${task.priority}</button>`
         : `<span class="priority-chip ${priorityChipClass(task.priority)}" disabled><span class="prio ${prioClass(task.priority)}"></span>${task.priority}</span>`;
+  const slotMeta = task.slot && task.slot !== 'any' ? `<div class="t-notes">${slotLabel(task.slot)}</div>` : '';
 
   if (cols === 'team') {
     return `<tr class="${isDone ? 'is-done' : ''}" id="tr-${task.id}">
       <td><input type="checkbox" class="ck" ${isDone ? 'checked' : ''} onchange="toggleDone('${task.id}')"></td>
-      <td><div class="t-name">${task.name}</div>${task.brief ? `<div class="t-notes">${task.brief.substring(0, 60)}${task.brief.length > 60 ? '…' : ''}</div>` : ''}</td>
-      <td><span style="font-size:11px;color:${client.color}">${client.name}</span></td>
+      <td><div class="t-name">${task.name}</div>${task.brief ? `<div class="t-notes">${task.brief.substring(0, 60)}${task.brief.length > 60 ? '…' : ''}</div>` : ''}${slotMeta}</td>
+      <td><span style="font-size:11px;color:${primaryClient.color}">${clientNames}</span></td>
       <td><span class="badge ${typeClass(task.type)}">${task.type}</span></td>
       <td>${dueDateEl(task.due)}</td>
-      <td><span class="status ${statusClass(task.status)}${statusReadonly}" ${statusAction}>${statusLabel(task.status)}</span></td>
+      <td><span class="status ${statusClass(task.status)}${statusReadonly}" ${statusAction}>${statusLabel(task.status)}</span></td><td style="white-space:nowrap">${moveUpBtn}${moveDownBtn}</td>
     </tr>`;
   }
 
   return `<tr class="${isDone ? 'is-done' : ''}" id="tr-${task.id}">
     <td><input type="checkbox" class="ck" ${isDone ? 'checked' : ''} onchange="toggleDone('${task.id}')"></td>
-    <td><div class="t-name">${task.name}${refsHtml}</div>${task.brief ? `<div class="t-notes">${task.brief.substring(0, 60)}${task.brief.length > 60 ? '…' : ''}</div>` : ''}</td>
-    <td><span style="font-size:12px;color:${client.color};font-weight:600">${client.name}</span></td>
+    <td><div class="t-name">${task.name}${refsHtml}</div>${task.brief ? `<div class="t-notes">${task.brief.substring(0, 60)}${task.brief.length > 60 ? '…' : ''}</div>` : ''}${slotMeta}</td>
+    <td><span style="font-size:12px;color:${primaryClient.color};font-weight:600">${clientNames}</span></td>
     <td><span class="badge ${typeClass(task.type)}">${task.type}</span></td>
-    <td><div style="display:flex;align-items:center;gap:6px"><div class="avatar" style="width:22px;height:22px;font-size:9px;background:${user.color}22;color:${user.color}">${user.name.charAt(0)}</div><span style="font-size:12px;color:var(--muted)">${user.name}</span></div></td>
+    <td><div style="display:flex;align-items:center;gap:6px"><div class="avatar" style="width:22px;height:22px;font-size:9px;background:${user.color}22;color:${user.color}">${user.name.charAt(0)}</div><span style="font-size:12px;color:var(--muted)">${assigneeNames}</span></div></td>
     <td>${dueDateEl(task.due)}</td>
     <td>${priorityEl}</td>
     <td><span class="status ${statusClass(task.status)}${statusReadonly}" ${statusAction}>${statusLabel(task.status)}</span></td>
@@ -773,7 +1006,7 @@ function taskRow(task, cols = 'full', editable = true) {
 function fillTable(bodyId, tasks, cols = 'full') {
   const body = byId(bodyId);
   if (!body) return;
-  const colspan = cols === 'team' ? 6 : 9;
+  const colspan = cols === 'team' ? 7 : 9;
   body.innerHTML = tasks.length ? tasks.map((task) => taskRow(task, cols)).join('') : `<tr class="empty-row"><td colspan="${colspan}">No tasks here</td></tr>`;
 }
 
@@ -787,7 +1020,7 @@ function updateBadges() {
   visibleClients().forEach((client) => {
     const el = byId(`nc-${client.id}`);
     if (el) {
-      el.textContent = visibleTasks().filter((task) => task.status !== 'done' && task.client === client.id).length;
+      el.textContent = visibleTasks().filter((task) => task.status !== 'done' && taskMatchesClient(task, client.id)).length;
     }
   });
 }
@@ -825,14 +1058,14 @@ function renderDashboard() {
 
 function renderTasksPage() {
   let tasks = visibleTasks();
-  if (activeFilters.client !== 'All') tasks = tasks.filter((task) => task.client === activeFilters.client);
+  if (activeFilters.client !== 'All') tasks = tasks.filter((task) => taskMatchesClient(task, activeFilters.client));
   if (activeFilters.type !== 'All') tasks = tasks.filter((task) => task.type === activeFilters.type);
   if (activeFilters.status === 'overdue') tasks = tasks.filter((task) => task.status !== 'done' && daysFrom(task.due) < 0);
-  if (activeFilters.assigned !== 'All') tasks = tasks.filter((task) => task.assigned === activeFilters.assigned);
+  if (activeFilters.assigned !== 'All') tasks = tasks.filter((task) => taskAssignedTo(task, activeFilters.assigned));
   tasks = tasks.sort((a, b) => {
     if (a.status === 'done' && b.status !== 'done') return 1;
     if (b.status === 'done' && a.status !== 'done') return -1;
-    return new Date(a.due) - new Date(b.due);
+    return a.sortOrder - b.sortOrder || new Date(a.due) - new Date(b.due);
   });
   fillTable('main-task-body', tasks);
 }
@@ -850,7 +1083,7 @@ function renderWeek() {
     const isToday = ds === todayStr;
     const dayTasks = scopedTasks.filter((task) => task.due === ds && task.status !== 'done');
     html += `<div class="day-col"><div class="day-head ${isToday ? 'is-today' : ''}"><div class="day-name">${days[d.getDay()]}</div><div class="day-num">${d.getDate()}</div></div>
-    ${dayTasks.map((task) => `<div class="day-task"><div class="dt-name">${task.name}</div><div class="dt-client">${getClient(task.client).name}</div></div>`).join('') || '<div style="padding:14px;text-align:center;color:var(--border2);font-size:20px">·</div>'}
+    ${dayTasks.map((task) => `<div class="day-task"><div class="dt-name">${task.name}</div><div class="dt-client">${getTaskClientNames(task)}</div></div>`).join('') || '<div style="padding:14px;text-align:center;color:var(--border2);font-size:20px">·</div>'}
     </div>`;
   }
   byId('week-grid').innerHTML = html;
@@ -863,7 +1096,7 @@ function renderWeek() {
 
 function renderMonth() {
   updateMonthDisplay();
-  const monthTasks = visibleTasks().filter((task) => isSameMonth(task.due, VIEW_DATE)).sort((a, b) => new Date(a.due) - new Date(b.due));
+  const monthTasks = visibleTasks().filter((task) => isSameMonth(task.due, VIEW_DATE)).sort((a, b) => a.sortOrder - b.sortOrder || new Date(a.due) - new Date(b.due));
   fillTable('month-task-body', monthTasks);
 }
 
@@ -916,17 +1149,23 @@ function renderGoals() {
 
 async function saveCalUrl() {
   if (!CURRENT_USER) return;
-  const calendarUrl = byId('cal-url-input').value.trim();
-  const { error } = await supabase.from('profiles').update({ calendar_url: calendarUrl }).eq('id', CURRENT_USER.id);
-  if (error) {
-    showToast(error.message, 'error');
-    return;
+  try {
+    const calendarUrl = byId('cal-url-input').value.trim();
+    await ensureSession();
+    const { error } = await supabase.from('profiles').update({ calendar_url: calendarUrl }).eq('id', CURRENT_USER.id);
+    if (error) {
+      showToast(error.message, 'error');
+      return;
+    }
+    CURRENT_USER.calendarUrl = calendarUrl;
+    const user = DB.users.find((entry) => entry.id === CURRENT_USER.id);
+    if (user) user.calendarUrl = calendarUrl;
+    renderCalendar();
+    showToast('Calendar URL saved', 'success');
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || 'Unable to save calendar URL', 'error');
   }
-  CURRENT_USER.calendarUrl = calendarUrl;
-  const user = DB.users.find((entry) => entry.id === CURRENT_USER.id);
-  if (user) user.calendarUrl = calendarUrl;
-  renderCalendar();
-  showToast('Calendar URL saved', 'success');
 }
 
 function renderCalendar() {
@@ -942,21 +1181,26 @@ function renderCalendar() {
 }
 
 function renderClients() {
-  const clients = isAdmin() ? DB.clients : visibleClients();
-  byId('clients-grid').innerHTML = clients.map((client) => {
-    const taskCount = visibleTasks().filter((task) => task.client === client.id && task.status !== 'done').length;
+  const clients = isAdmin() ? [...DB.clients].sort((a, b) => a.sortOrder - b.sortOrder) : visibleClients();
+  byId('clients-grid').innerHTML = clients.map((client, index) => {
+    const taskCount = visibleTasks().filter((task) => taskMatchesClient(task, client.id) && task.status !== 'done').length;
     const editBtn = canEdit() ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editClient('${client.id}')">Edit</button>` : '';
+    const addTaskBtn = canCreateTask() ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openTaskModal('${client.id}')">+ Task</button>` : '';
+    const moveUpBtn = canEdit() ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="event.stopPropagation();moveClient('${client.id}',-1)" ${index === 0 ? 'disabled' : ''}>↑</button>` : '';
+    const moveDownBtn = canEdit() ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="event.stopPropagation();moveClient('${client.id}',1)" ${index === clients.length - 1 ? 'disabled' : ''}>↓</button>` : '';
     const delBtn = isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteClient('${client.id}')">×</button>` : '';
     return `<div class="client-card">
       <div class="client-card-head" onclick="showPage('tasks');setFilter('client','${client.id}')" style="cursor:pointer">
         <div class="client-color-bar" style="background:${client.color}"></div>
-        <div class="client-info"><div class="client-name">${client.name}</div><div class="client-type-badge">${client.type} · ${client.industry || '—'}</div></div>
-        <div class="client-card-actions">${editBtn}${delBtn}</div>
+        <div class="client-info"><div class="client-name">${client.name}</div><div class="client-type-badge">${client.type} · ${client.category || client.industry || '—'}</div></div>
+        <div class="client-card-actions">${moveUpBtn}${moveDownBtn}${addTaskBtn}${editBtn}${delBtn}</div>
       </div>
       <div class="client-card-body">
         ${client.brief ? `<div class="client-detail-row"><span class="client-detail-label">Brief</span><span class="client-detail-val" style="font-size:12px;color:var(--muted)">${client.brief.substring(0, 80)}${client.brief.length > 80 ? '…' : ''}</span></div>` : ''}
-        <div class="client-detail-row"><span class="client-detail-label">Strategy due</span><span class="client-detail-val">Day ${client.stratDay || '—'} of month</span></div>
-        ${client.fee ? `<div class="client-detail-row"><span class="client-detail-label">Retainer</span><span class="client-detail-val">₹${Number(client.fee).toLocaleString('en-IN')}/mo</span></div>` : ''}
+        ${!isProjectType(client.type, client.billingModel) ? `<div class="client-detail-row"><span class="client-detail-label">Strategy due</span><span class="client-detail-val">Day ${client.stratDay || '—'} of month</span></div>` : ''}
+        ${(client.paperFee || client.actualFee) ? `<div class="client-detail-row"><span class="client-detail-label">${clientRevenueLabel(client, 'paper')}</span><span class="client-detail-val">₹${Number(client.paperFee || 0).toLocaleString('en-IN')}</span></div><div class="client-detail-row"><span class="client-detail-label">${clientRevenueLabel(client, 'actual')}</span><span class="client-detail-val">₹${Number(client.actualFee || 0).toLocaleString('en-IN')}</span></div>` : ''}
+        ${client.projectStartDate || client.projectEndDate ? `<div class="client-detail-row"><span class="client-detail-label">Timeline</span><span class="client-detail-val">${client.projectStartDate ? fmtDate(client.projectStartDate) : '—'} to ${client.projectEndDate ? fmtDate(client.projectEndDate) : '—'}</span></div>` : ''}
+        ${client.timeline?.length ? `<div class="client-detail-row"><span class="client-detail-label">Milestones</span><span class="client-detail-val">${client.timeline.length}</span></div>` : ''}
         ${client.contact ? `<div class="client-detail-row"><span class="client-detail-label">Contact</span><span class="client-detail-val">${client.contact}</span></div>` : ''}
         ${client.drive ? `<div class="client-detail-row"><span class="client-detail-label">Drive</span><span class="client-detail-val"><a href="${client.drive}" target="_blank" rel="noreferrer" class="brief-link">Open folder 🔗</a></span></div>` : ''}
         <div class="client-detail-row"><span class="client-detail-label">Open tasks</span><span class="client-detail-val" style="color:var(--lime)">${taskCount}</span></div>
@@ -986,23 +1230,25 @@ function renderTeam() {
 
 function renderRecurring() {
   byId('recurring-list').innerHTML = DB.recurring.map((item) => {
-    const client = getClient(item.client);
-    const user = getUser(item.assigned);
-    const delBtn = isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteRecurring('${item.id}')">× Remove</button>` : '';
+    const client = getClient(item.clientIds?.[0]);
+    const delBtn = canEdit() ? `<button class="btn btn-danger btn-sm" onclick="deleteRecurring('${item.id}')">× Remove</button>` : '';
+    const editBtn = canEdit() ? `<button class="btn btn-ghost btn-sm" onclick="editRecurring('${item.id}')">Edit</button>` : '';
     return `<div class="template-card">
       <div class="template-head" onclick="this.classList.toggle('expanded');this.nextElementSibling.classList.toggle('open')">
         <span style="width:8px;height:8px;border-radius:50%;background:${client.color};display:inline-block"></span>
         <span style="font-weight:600;font-size:13px">${item.name}</span>
         <span class="badge ${typeClass(item.type)}" style="margin-left:8px">${item.type}</span>
-        <span style="font-size:12px;color:var(--muted);margin-left:8px">→ ${client.name} · Due day ${item.day}</span>
-        <span style="margin-left:auto;font-size:12px;color:var(--muted)">Assigned: ${user.name}</span>
+        <span style="font-size:12px;color:var(--muted);margin-left:8px">→ ${getTaskClientNames(item)} · ${taskRepeatLabel(item) || 'Monthly'} · ${fmtDate(item.anchorDate || item.due)}</span>
+        <span style="margin-left:auto;font-size:12px;color:var(--muted)">Assigned: ${getTaskAssigneeNames(item)}</span>
         <span class="expand-icon">▾</span>
       </div>
       <div class="template-body">
         <div style="padding:12px 16px;display:flex;align-items:center;gap:12px;border-top:1px solid var(--border)">
           <span style="font-size:12px;color:var(--muted)">Priority: <strong>${item.priority}</strong></span>
+          <span style="font-size:12px;color:var(--muted)">Slot: ${slotLabel(item.slot)}</span>
+          ${item.reminders?.length ? `<span style="font-size:12px;color:var(--muted)">Reminders: ${item.reminders.map((entry) => `${entry.daysBefore}d @ ${entry.time}`).join(', ')}</span>` : ''}
           ${item.brief ? `<span style="font-size:12px;color:var(--muted)">Brief: ${item.brief}</span>` : ''}
-          ${delBtn}
+          <div class="template-actions">${editBtn}${delBtn}</div>
         </div>
       </div>
     </div>`;
@@ -1029,7 +1275,7 @@ function renderSettings() {
 }
 
 function renderMyWork() {
-  const myTasks = DB.tasks.filter((task) => task.assigned === CURRENT_USER.id && task.status !== 'done').sort((a, b) => new Date(a.due) - new Date(b.due));
+  const myTasks = DB.tasks.filter((task) => taskAssignedTo(task, CURRENT_USER.id) && task.status !== 'done').sort((a, b) => a.sortOrder - b.sortOrder || new Date(a.due) - new Date(b.due));
   fillTable('mywork-body', myTasks, 'team');
 
   const myClients = CURRENT_USER.clients.map((clientId) => DB.clients.find((client) => client.id === clientId)).filter(Boolean);
@@ -1042,6 +1288,7 @@ function renderMyWork() {
       </div>
       <div class="brief-body">
         ${client.brief ? `<div class="brief-section"><div class="brief-section-label">Objective</div><div class="brief-section-text">${client.brief}</div></div>` : ''}
+        ${client.guidelines ? `<div class="brief-section"><div class="brief-section-label">Values & Guidelines</div><div class="brief-section-text">${client.guidelines}</div></div>` : ''}
         ${client.drive ? `<div class="brief-section"><div class="brief-section-label">References</div><a href="${client.drive}" target="_blank" rel="noreferrer" class="brief-link">Open Drive Folder 🔗</a></div>` : ''}
         <div class="brief-section"><div class="brief-section-label">Strategy due</div><div class="brief-section-text">Day ${client.stratDay} of every month</div></div>
       </div>
@@ -1060,11 +1307,11 @@ function renderTeamUpdates() {
   block.style.display = '';
   const teamUsers = DB.users.filter((user) => user.role !== 'admin');
   grid.innerHTML = teamUsers.map((user) => {
-    const tasks = DB.tasks.filter((task) => task.assigned === user.id).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    const tasks = DB.tasks.filter((task) => taskAssignedTo(task, user.id)).sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
     const open = tasks.filter((task) => task.status !== 'done').length;
     const review = tasks.filter((task) => task.status === 'review').length;
     const done = tasks.filter((task) => task.status === 'done').length;
-    const updates = tasks.slice(0, 3).map((task) => `<div class="team-update-item"><div class="team-update-item-title">${task.name}</div><div class="team-update-item-meta">${statusLabel(task.status)} · ${fmtDateTime(task.updatedAt)} · ${getClient(task.client).name}</div></div>`).join('') || '<div class="team-update-item"><div class="team-update-item-title">No task updates yet</div></div>';
+    const updates = tasks.slice(0, 3).map((task) => `<div class="team-update-item"><div class="team-update-item-title">${task.name}</div><div class="team-update-item-meta">${statusLabel(task.status)} · ${fmtDateTime(task.updatedAt)} · ${getTaskClientNames(task)}</div></div>`).join('') || '<div class="team-update-item"><div class="team-update-item-title">No task updates yet</div></div>';
     return `<div class="team-update-card">
       <div class="team-update-head">
         <div class="avatar" style="background:${user.color}22;color:${user.color}">${user.name.charAt(0).toUpperCase()}</div>
@@ -1093,6 +1340,8 @@ function renderAll() {
   if (currentPage === 'month') renderMonth();
   if (currentPage === 'monthly') renderMonthly();
   if (currentPage === 'goals' && canViewGoals()) renderGoals();
+  if (currentPage === 'guidelines') renderGuidelines();
+  if (currentPage === 'focus') renderFocusTimer();
   if (currentPage === 'calendar') renderCalendar();
   if (currentPage === 'clients') renderClients();
   if (currentPage === 'team') renderTeam();
@@ -1101,19 +1350,83 @@ function renderAll() {
   if (currentPage === 'mywork') renderMyWork();
 }
 
-function populateTaskModal() {
-  const clientSelect = byId('t-client');
-  const assigneeSelect = byId('t-assigned');
+function renderCheckboxList(containerId, items, selectedIds = [], disabled = false) {
+  const container = byId(containerId);
+  if (!container) return;
+  const selected = new Set(normalizeIdList(selectedIds));
+  container.innerHTML = items.map((item) => `<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" class="ck" value="${item.id}" ${selected.has(item.id) ? 'checked' : ''} ${disabled ? 'disabled' : ''}> ${item.label}</label>`).join('');
+}
+
+function getCheckedValues(containerId) {
+  return [...document.querySelectorAll(`#${containerId} input:checked`)].map((input) => input.value);
+}
+
+function addReminderRow(value = { daysBefore: 1, time: DEFAULT_REMINDER_TIME }, containerId = 'task-reminders-list') {
+  const container = byId(containerId);
+  if (!container) return;
+  const rowId = `reminder-row-${taskReminderCount}`;
+  const div = document.createElement('div');
+  div.className = 'form-row';
+  div.id = rowId;
+  div.innerHTML = `<div class="form-group"><label class="form-label">Days Before</label><input class="form-control reminder-days" type="number" min="0" value="${value.daysBefore ?? 1}"></div><div class="form-group"><label class="form-label">Time</label><div style="display:flex;gap:8px"><input class="form-control reminder-time" type="time" value="${value.time || DEFAULT_REMINDER_TIME}" style="flex:1"><button class="btn btn-danger btn-sm btn-icon" type="button" onclick="document.getElementById('${rowId}').remove()">×</button></div></div>`;
+  container.appendChild(div);
+  taskReminderCount += 1;
+}
+
+function collectReminderRows(containerId = 'task-reminders-list') {
+  return normalizeReminderList([...document.querySelectorAll(`#${containerId} .form-row`)].map((row) => ({
+    daysBefore: row.querySelector('.reminder-days')?.value,
+    time: row.querySelector('.reminder-time')?.value || DEFAULT_REMINDER_TIME,
+  })));
+}
+
+function addTimelineRow(item = {}) {
+  const container = byId('client-timeline-list');
+  if (!container) return;
+  const timeline = normalizeTimelineItem(item);
+  const rowId = `timeline-row-${clientTimelineCount}`;
+  const div = document.createElement('div');
+  div.className = 'card card-sm';
+  div.id = rowId;
+  div.dataset.timelineId = timeline.id;
+  div.innerHTML = `<div class="form-row"><div class="form-group"><label class="form-label">Milestone</label><input class="form-control tl-title" value="${timeline.title}"></div><div class="form-group"><label class="form-label">Date</label><input class="form-control tl-date" type="date" value="${timeline.date}"></div></div><div class="form-group"><label class="form-label">Brief</label><textarea class="form-control tl-brief">${timeline.brief || ''}</textarea></div><div class="form-group"><label class="form-label">Assignees</label><div class="tl-assignees" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div></div><div style="display:flex;justify-content:flex-end"><button class="btn btn-danger btn-sm" type="button" onclick="document.getElementById('${rowId}').remove()">Remove milestone</button></div>`;
+  container.appendChild(div);
+  const assigneeWrap = div.querySelector('.tl-assignees');
+  assigneeWrap.innerHTML = DB.users.map((user) => `<label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" class="ck" value="${user.id}" ${timeline.assignedIds.includes(user.id) ? 'checked' : ''}> ${user.name}</label>`).join('');
+  clientTimelineCount += 1;
+}
+
+function collectTimelineRows() {
+  return [...document.querySelectorAll('#client-timeline-list > .card')].map((row) => ({
+    id: row.dataset.timelineId || newId('tl'),
+    title: row.querySelector('.tl-title')?.value.trim(),
+    date: row.querySelector('.tl-date')?.value || todayStr,
+    brief: row.querySelector('.tl-brief')?.value.trim() || '',
+    assignedIds: [...row.querySelectorAll('.tl-assignees input:checked')].map((input) => input.value),
+  })).filter((item) => item.title);
+}
+
+function updateClientFormVisibility() {
+  const type = byId('c-type').value;
+  const project = isProjectType(type, byId('c-billing-model')?.value || '');
+  const feeLabel = byId('c-fee-label');
+  const projectFields = byId('client-project-fields');
+  if (feeLabel) feeLabel.textContent = project ? 'Project Fee (₹)' : 'Monthly Retainer Fee (₹)';
+  if (projectFields) projectFields.style.display = project ? '' : 'none';
+}
+
+function populateTaskModal(selectedClientId = '') {
   const clients = isAdmin() || CURRENT_USER?.role === 'manager' ? DB.clients : visibleClients();
-  clientSelect.innerHTML = clients.map((client) => `<option value="${client.id}">${client.name}</option>`).join('');
-  assigneeSelect.innerHTML = `<option value="">Unassigned</option>${DB.users.map((user) => `<option value="${user.id}">${user.name}</option>`).join('')}`;
-  if (clients[0] && !clientSelect.value) clientSelect.value = clients[0].id;
-  if (!canEditTaskDetails()) {
-    assigneeSelect.value = CURRENT_USER.id;
-    assigneeSelect.disabled = true;
-  } else {
-    assigneeSelect.disabled = false;
+  const defaultClientIds = selectedClientId ? [selectedClientId] : activeFilters.client !== 'All' ? [activeFilters.client] : clients[0] ? [clients[0].id] : [];
+  renderCheckboxList('t-client-list', clients.map((client) => ({ id: client.id, label: client.name })), defaultClientIds);
+  renderCheckboxList('t-assigned-list', DB.users.map((user) => ({ id: user.id, label: user.name })), CURRENT_USER?.role === 'team' ? [CURRENT_USER.id] : []);
+  if (CURRENT_USER?.role === 'team') {
+    renderCheckboxList('t-assigned-list', DB.users.map((user) => ({ id: user.id, label: user.name })), [CURRENT_USER.id], true);
   }
+  byId('t-type').value = getClient(defaultClientIds[0]).type || 'Retainer';
+  byId('task-reminders-list').innerHTML = '';
+  taskReminderCount = 0;
+  addReminderRow();
 }
 
 function openModal(id) {
@@ -1124,64 +1437,71 @@ function closeModal(id) {
   byId(id).classList.remove('open');
 }
 
-function openTaskModal() {
-  if (!canEditTaskDetails()) {
-    showToast('Only admins and managers can create or fully edit tasks.', 'error');
+function openTaskModal(selectedClientId = '') {
+  if (!canCreateTask()) {
+    showToast('Sign in to create tasks.', 'error');
     return;
   }
-  populateTaskModal();
+  populateTaskModal(selectedClientId);
   byId('edit-task-id').value = '';
   byId('task-modal-title').textContent = 'Add Task';
   byId('t-name').value = '';
   byId('t-brief').value = '';
+  byId('t-start').value = '';
   byId('t-due').value = todayStr;
-  byId('t-type').value = 'Retainer';
   byId('t-priority').value = 'Medium';
+  byId('t-slot').value = 'any';
   byId('t-status').value = 'todo';
   byId('t-refs').value = '';
-  byId('t-remind').value = 'none';
-  byId('t-recurring').value = 'no';
-  byId('t-assigned').value = '';
+  byId('t-repeat-type').value = 'none';
   openModal('task-modal');
 }
 
 function editTask(id) {
-  if (!canEditTaskDetails()) {
-    showToast('Only admins and managers can edit task details.', 'error');
+  if (!canManageTask(DB.tasks.find((entry) => entry.id === id))) {
+    showToast('You do not have access to edit this task.', 'error');
     return;
   }
   const task = DB.tasks.find((entry) => entry.id === id);
   if (!task) return;
-  populateTaskModal();
+  populateTaskModal(getPrimaryClientId(task));
   byId('edit-task-id').value = id;
   byId('task-modal-title').textContent = 'Edit Task';
   byId('t-name').value = task.name;
   byId('t-brief').value = task.brief || '';
-  byId('t-client').value = task.client;
+  byId('t-start').value = task.start || '';
+  renderCheckboxList('t-client-list', (isAdmin() || CURRENT_USER?.role === 'manager' ? DB.clients : visibleClients()).map((client) => ({ id: client.id, label: client.name })), getClientIds(task));
   byId('t-type').value = task.type;
   byId('t-due').value = task.due;
   byId('t-priority').value = task.priority;
+  byId('t-slot').value = task.slot || 'any';
   byId('t-status').value = task.status;
-  byId('t-assigned').value = task.assigned || '';
+  renderCheckboxList('t-assigned-list', DB.users.map((user) => ({ id: user.id, label: user.name })), getAssignedIds(task), CURRENT_USER?.role === 'team');
   byId('t-refs').value = task.refs || '';
-  byId('t-remind').value = task.remind || 'none';
-  byId('t-recurring').value = task.recurring || 'no';
+  byId('t-repeat-type').value = task.repeatType || 'none';
+  byId('task-reminders-list').innerHTML = '';
+  taskReminderCount = 0;
+  (task.reminders?.length ? task.reminders : [{ daysBefore: 1, time: DEFAULT_REMINDER_TIME }]).forEach((entry) => addReminderRow(entry));
   openModal('task-modal');
 }
 
 function syncRecurringTemplateFromTask(task) {
-  if (task.recurring !== 'yes') return task.recurringTemplateId || '';
-  const dueDate = new Date(`${task.due}T00:00:00`);
-  const day = Math.min(dueDate.getDate(), 28);
+  if (!task.repeatType || task.repeatType === 'none') return task.recurringTemplateId || '';
   const existingId = task.recurringTemplateId || newId('r');
   const template = {
     id: existingId,
     name: task.name,
-    client: task.client,
+    client: getPrimaryClientId(task),
+    clientIds: getClientIds(task),
     type: task.type,
-    day,
+    anchorDate: task.due,
+    startDate: task.start || '',
     priority: task.priority,
-    assigned: task.assigned,
+    assigned: getAssignedIds(task)[0] || '',
+    assignedIds: getAssignedIds(task),
+    reminders: getReminderList(task),
+    repeatType: task.repeatType || 'monthly',
+    slot: task.slot || 'any',
     brief: task.brief,
   };
   const idx = DB.recurring.findIndex((item) => item.id === existingId);
@@ -1191,13 +1511,20 @@ function syncRecurringTemplateFromTask(task) {
 }
 
 async function saveTask() {
-  if (!canEditTaskDetails()) {
-    showToast('Only admins and managers can save task details.', 'error');
+  if (!canCreateTask()) {
+    showToast('Sign in to save tasks.', 'error');
     return;
   }
   const name = byId('t-name').value.trim();
   if (!name) {
     showToast('Task name is required', 'error');
+    return;
+  }
+  const clientIds = getCheckedValues('t-client-list');
+  const assignedIds = CURRENT_USER?.role === 'team' ? [CURRENT_USER.id] : getCheckedValues('t-assigned-list');
+  const due = byId('t-due').value;
+  if (!due) {
+    showToast('Due date is required', 'error');
     return;
   }
 
@@ -1206,22 +1533,35 @@ async function saveTask() {
     id,
     name,
     brief: byId('t-brief').value.trim(),
-    client: byId('t-client').value,
+    client: clientIds[0] || '',
+    clientIds,
     type: byId('t-type').value,
-    due: byId('t-due').value,
+    start: byId('t-start').value,
+    due,
     priority: byId('t-priority').value,
+    slot: byId('t-slot').value,
     status: byId('t-status').value,
-    assigned: byId('t-assigned').value,
+    assigned: assignedIds[0] || '',
+    assignedIds,
     refs: byId('t-refs').value.trim(),
-    remind: byId('t-remind').value,
-    recurring: byId('t-recurring').value,
-    recurringTemplateId: '',
+    remind: 'none',
+    reminders: collectReminderRows(),
+    recurring: byId('t-repeat-type').value === 'none' ? 'no' : 'yes',
+    repeatType: byId('t-repeat-type').value,
+    recurringTemplateId: DB.tasks.find((entry) => entry.id === id)?.recurringTemplateId || '',
+    sortOrder: DB.tasks.find((entry) => entry.id === id)?.sortOrder || (DB.tasks.length + 1),
     updatedAt: new Date().toISOString(),
     updatedBy: CURRENT_USER?.id || '',
   };
+  if (!canEditTaskDetails()) {
+    task.assigned = CURRENT_USER.id;
+    task.assignedIds = [CURRENT_USER.id];
+    task.status = 'todo';
+  }
   task.recurringTemplateId = syncRecurringTemplateFromTask(task);
 
   try {
+    await ensureSession();
     const { error } = await supabase.from('tasks').upsert(mapTaskToRow(task));
     if (error) throw error;
     await persistRecurring();
@@ -1236,7 +1576,7 @@ async function saveTask() {
 }
 
 async function deleteTask(id) {
-  if (!canEditTaskDetails()) {
+  if (!canEdit()) {
     showToast('Only admins and managers can delete tasks.', 'error');
     return;
   }
@@ -1257,6 +1597,7 @@ async function updateTaskField(task, patch, successMessage = '') {
   try {
     const nextTask = { ...task, ...patch };
     touchTask(nextTask);
+    await ensureSession();
     const { error } = await supabase.from('tasks').update(mapTaskToRow(nextTask)).eq('id', task.id);
     if (error) throw error;
     await loadWorkspace();
@@ -1286,6 +1627,27 @@ async function cyclePriority(id) {
   await updateTaskField(task, { priority: priorityCycle(task.priority) });
 }
 
+async function moveMyTask(id, direction) {
+  const scoped = DB.tasks.filter((task) => taskAssignedTo(task, CURRENT_USER.id) && task.status !== 'done').sort((a, b) => a.sortOrder - b.sortOrder || new Date(a.due) - new Date(b.due));
+  const index = scoped.findIndex((task) => task.id === id);
+  const swapIndex = index + direction;
+  if (index < 0 || swapIndex < 0 || swapIndex >= scoped.length) return;
+  const task = scoped[index];
+  const swapTask = scoped[swapIndex];
+  try {
+    await ensureSession();
+    const { error: firstError } = await supabase.from('tasks').update({ sort_order: swapTask.sortOrder }).eq('id', task.id);
+    if (firstError) throw firstError;
+    const { error: secondError } = await supabase.from('tasks').update({ sort_order: task.sortOrder }).eq('id', swapTask.id);
+    if (secondError) throw secondError;
+    await loadWorkspace();
+    renderMyWork();
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || 'Unable to reorder task', 'error');
+  }
+}
+
 function openClientModal() {
   if (!canEdit()) {
     showToast('Only admins and managers can manage clients.', 'error');
@@ -1293,13 +1655,19 @@ function openClientModal() {
   }
   byId('edit-client-id').value = '';
   byId('client-modal-title').textContent = 'Add Client / Project';
-  ['c-name', 'c-industry', 'c-brief', 'c-drive', 'c-contact', 'c-email'].forEach((id) => {
+  ['c-name', 'c-industry', 'c-category', 'c-brief', 'c-guidelines', 'c-drive', 'c-contact', 'c-email', 'c-project-start', 'c-project-end'].forEach((id) => {
     byId(id).value = '';
   });
   byId('c-type').value = 'Retainer';
+  byId('c-billing-model').value = 'retainer';
   byId('c-color').value = '#6eb5ff';
   byId('c-strat-day').value = '20';
   byId('c-fee').value = '';
+  byId('c-paper-fee').value = '';
+  byId('c-actual-fee').value = '';
+  byId('client-timeline-list').innerHTML = '';
+  clientTimelineCount = 0;
+  updateClientFormVisibility();
   openModal('client-modal');
 }
 
@@ -1314,14 +1682,25 @@ function editClient(id) {
   byId('client-modal-title').textContent = 'Edit Client';
   byId('c-name').value = client.name;
   byId('c-type').value = client.type;
+  byId('c-billing-model').value = client.billingModel || (isProjectType(client.type) ? 'project' : 'retainer');
   byId('c-industry').value = client.industry || '';
+  byId('c-category').value = client.category || '';
   byId('c-color').value = client.color || '#6eb5ff';
   byId('c-brief').value = client.brief || '';
+  byId('c-guidelines').value = client.guidelines || '';
   byId('c-strat-day').value = client.stratDay || 20;
   byId('c-drive').value = client.drive || '';
   byId('c-contact').value = client.contact || '';
   byId('c-email').value = client.email || '';
   byId('c-fee').value = client.fee || '';
+  byId('c-paper-fee').value = client.paperFee || '';
+  byId('c-actual-fee').value = client.actualFee || '';
+  byId('c-project-start').value = client.projectStartDate || '';
+  byId('c-project-end').value = client.projectEndDate || '';
+  byId('client-timeline-list').innerHTML = '';
+  clientTimelineCount = 0;
+  (client.timeline || []).forEach((item) => addTimelineRow(item));
+  updateClientFormVisibility();
   openModal('client-modal');
 }
 
@@ -1340,18 +1719,29 @@ async function saveClient() {
     id,
     name,
     type: byId('c-type').value,
+    billing_model: byId('c-billing-model').value,
     industry: byId('c-industry').value.trim(),
+    category: byId('c-category').value.trim(),
     color: byId('c-color').value,
     brief: byId('c-brief').value.trim(),
+    guidelines: byId('c-guidelines').value.trim(),
     strat_day: parseInt(byId('c-strat-day').value, 10) || 20,
     drive: byId('c-drive').value.trim(),
     contact: byId('c-contact').value.trim(),
     email: byId('c-email').value.trim(),
     fee: parseFloat(byId('c-fee').value || '0') || 0,
+    paper_fee: parseFloat(byId('c-paper-fee').value || '0') || 0,
+    actual_fee: parseFloat(byId('c-actual-fee').value || '0') || 0,
+    project_start_date: byId('c-project-start').value || null,
+    project_end_date: byId('c-project-end').value || null,
+    timeline: collectTimelineRows(),
+    sort_order: DB.clients.find((entry) => entry.id === id)?.sortOrder || (DB.clients.length + 1),
   };
   try {
+    await ensureSession();
     const { error } = await supabase.from('clients').upsert(client);
     if (error) throw error;
+    await syncClientTimelineTasks(client);
     await loadWorkspace();
     closeModal('client-modal');
     buildNavClientList();
@@ -1430,6 +1820,7 @@ async function saveUser() {
   const permissions = { viewGoals: byId('u-view-goals').checked || role === 'admin' };
 
   try {
+    await ensureSession();
     const { error: profileError } = await supabase
       .from('profiles')
       .update({
@@ -1582,16 +1973,47 @@ function openRecurringModal() {
     showToast('Only admins and managers can manage recurring templates.', 'error');
     return;
   }
-  ['r-name', 'r-brief'].forEach((id) => {
+  byId('edit-recurring-id').value = '';
+  byId('recurring-modal-title').textContent = 'Add Recurring Template';
+  ['r-name', 'r-brief', 'r-start'].forEach((id) => {
     byId(id).value = '';
   });
-  byId('r-day').value = 20;
+  byId('r-anchor').value = todayStr;
   byId('r-priority').value = 'Medium';
   byId('r-type').value = 'Retainer';
-  const clients = isAdmin() || CURRENT_USER?.role === 'manager' ? DB.clients : visibleClients();
-  byId('r-client').innerHTML = clients.map((client) => `<option value="${client.id}">${client.name}</option>`).join('');
-  byId('r-assigned').innerHTML = `<option value="">Unassigned</option>${DB.users.map((user) => `<option value="${user.id}">${user.name}</option>`).join('')}`;
+  byId('r-slot').value = 'any';
+  byId('r-repeat-type').value = 'monthly';
+  renderCheckboxList('r-client-list', (isAdmin() || CURRENT_USER?.role === 'manager' ? DB.clients : visibleClients()).map((client) => ({ id: client.id, label: client.name })), []);
+  renderCheckboxList('r-assigned-list', DB.users.map((user) => ({ id: user.id, label: user.name })), []);
+  byId('recurring-reminders-list').innerHTML = '';
+  taskReminderCount = 0;
+  addReminderRow({ daysBefore: 1, time: DEFAULT_REMINDER_TIME }, 'recurring-reminders-list');
   openModal('recurring-modal');
+}
+
+function editRecurring(id) {
+  if (!canEdit()) {
+    showToast('Only admins and managers can manage recurring templates.', 'error');
+    return;
+  }
+  const template = DB.recurring.find((item) => item.id === id);
+  if (!template) return;
+  openRecurringModal();
+  byId('edit-recurring-id').value = id;
+  byId('recurring-modal-title').textContent = 'Edit Recurring Template';
+  byId('r-name').value = template.name;
+  byId('r-brief').value = template.brief || '';
+  byId('r-start').value = template.startDate || '';
+  byId('r-anchor').value = template.anchorDate || todayStr;
+  byId('r-priority').value = template.priority;
+  byId('r-type').value = template.type;
+  byId('r-slot').value = template.slot || 'any';
+  byId('r-repeat-type').value = template.repeatType || 'monthly';
+  renderCheckboxList('r-client-list', (isAdmin() || CURRENT_USER?.role === 'manager' ? DB.clients : visibleClients()).map((client) => ({ id: client.id, label: client.name })), template.clientIds || []);
+  renderCheckboxList('r-assigned-list', DB.users.map((user) => ({ id: user.id, label: user.name })), template.assignedIds || []);
+  byId('recurring-reminders-list').innerHTML = '';
+  taskReminderCount = 0;
+  (template.reminders?.length ? template.reminders : [{ daysBefore: 1, time: DEFAULT_REMINDER_TIME }]).forEach((entry) => addReminderRow(entry, 'recurring-reminders-list'));
 }
 
 async function saveRecurring() {
@@ -1604,22 +2026,31 @@ async function saveRecurring() {
     showToast('Name required', 'error');
     return;
   }
+  const id = byId('edit-recurring-id').value || newId('r');
   const template = {
-    id: newId('r'),
+    id,
     name,
-    client: byId('r-client').value,
+    client: getCheckedValues('r-client-list')[0] || '',
+    clientIds: getCheckedValues('r-client-list'),
     type: byId('r-type').value,
-    day: parseInt(byId('r-day').value, 10) || 20,
+    anchorDate: byId('r-anchor').value || todayStr,
+    startDate: byId('r-start').value || '',
     priority: byId('r-priority').value,
-    assigned: byId('r-assigned').value,
+    assigned: getCheckedValues('r-assigned-list')[0] || '',
+    assignedIds: getCheckedValues('r-assigned-list'),
+    reminders: collectReminderRows('recurring-reminders-list'),
+    repeatType: byId('r-repeat-type').value,
+    slot: byId('r-slot').value,
     brief: byId('r-brief').value.trim(),
   };
-  DB.recurring.push(template);
+  const idx = DB.recurring.findIndex((item) => item.id === id);
+  if (idx >= 0) DB.recurring[idx] = template;
+  else DB.recurring.push(template);
   try {
     await persistRecurring();
     closeModal('recurring-modal');
     renderRecurring();
-    showToast('Recurring template added', 'success');
+    showToast(idx >= 0 ? 'Recurring template updated' : 'Recurring template added', 'success');
   } catch (error) {
     console.error(error);
     showToast(error.message || 'Unable to save template', 'error');
@@ -1635,6 +2066,9 @@ async function deleteRecurring(id) {
   DB.recurring = DB.recurring.filter((item) => item.id !== id);
   try {
     await persistRecurring();
+    const { error: taskError } = await supabase.from('tasks').delete().eq('recurring_template_id', id);
+    if (taskError) throw taskError;
+    await loadWorkspace();
     renderRecurring();
     showToast('Template removed', 'success');
   } catch (error) {
@@ -1643,31 +2077,190 @@ async function deleteRecurring(id) {
   }
 }
 
+async function syncClientTimelineTasks(clientRow) {
+  const client = {
+    id: clientRow.id,
+    name: clientRow.name,
+    type: clientRow.type,
+    timeline: Array.isArray(clientRow.timeline) ? clientRow.timeline : [],
+  };
+  const existingTasks = DB.tasks.filter((task) => task.sourceClientTimelineId && taskMatchesClient(task, client.id));
+  const existingMap = new Map(existingTasks.map((task) => [task.sourceClientTimelineId, task]));
+  const nextTimeline = client.timeline.map(normalizeTimelineItem);
+  const upserts = nextTimeline.map((item, index) => mapTaskToRow({
+    id: existingMap.get(item.id)?.id || crypto.randomUUID(),
+    name: item.title,
+    brief: item.brief || '',
+    client: client.id,
+    clientIds: [client.id],
+    type: client.type,
+    start: '',
+    due: item.date,
+    priority: 'Medium',
+    slot: 'any',
+    status: existingMap.get(item.id)?.status || 'todo',
+    assigned: item.assignedIds?.[0] || '',
+    assignedIds: normalizeIdList(item.assignedIds || []),
+    refs: '',
+    reminders: [],
+    repeatType: 'none',
+    recurringTemplateId: '',
+    cleanupAfterDays: 14,
+    sourceClientTimelineId: item.id,
+    autoGenerated: true,
+    sortOrder: index + 1,
+    updatedBy: CURRENT_USER?.id || '',
+  }));
+  const staleIds = existingTasks.filter((task) => !nextTimeline.some((item) => item.id === task.sourceClientTimelineId)).map((task) => task.id);
+  if (upserts.length) {
+    const { error } = await supabase.from('tasks').upsert(upserts);
+    if (error) throw error;
+  }
+  if (staleIds.length) {
+    const { error } = await supabase.from('tasks').delete().in('id', staleIds);
+    if (error) throw error;
+  }
+}
+
+async function moveClient(id, direction) {
+  const clients = [...DB.clients].sort((a, b) => a.sortOrder - b.sortOrder);
+  const index = clients.findIndex((client) => client.id === id);
+  const swapIndex = index + direction;
+  if (index < 0 || swapIndex < 0 || swapIndex >= clients.length) return;
+  const current = clients[index];
+  const swap = clients[swapIndex];
+  try {
+    await ensureSession();
+    const { error: firstError } = await supabase.from('clients').update({ sort_order: swap.sortOrder }).eq('id', current.id);
+    if (firstError) throw firstError;
+    const { error: secondError } = await supabase.from('clients').update({ sort_order: current.sortOrder }).eq('id', swap.id);
+    if (secondError) throw secondError;
+    await loadWorkspace();
+    buildNavClientList();
+    renderClients();
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || 'Unable to move client', 'error');
+  }
+}
+
+function renderGuidelines() {
+  const clients = visibleClients();
+  const wrap = byId('guidelines-grid');
+  if (!wrap) return;
+  wrap.innerHTML = clients.map((client) => `<div class="brief-card"><div class="brief-head"><span class="brief-client-dot" style="background:${client.color}"></span><span class="brief-client-name">${client.name}</span><span class="brief-type">${client.type}</span></div><div class="brief-body">${client.guidelines ? `<div class="brief-section"><div class="brief-section-label">Values & Guidelines</div><div class="brief-section-text">${client.guidelines}</div></div>` : `<div style="color:var(--muted);font-size:13px">No guidelines added yet.</div>`}${canEdit() ? `<button class="btn btn-ghost btn-sm" onclick="editClient('${client.id}')">Edit Guidelines</button>` : ''}</div></div>`).join('') || '<div style="color:var(--muted);font-size:13px">No brands assigned to you yet.</div>';
+}
+
+function focusTimerDuration(mode) {
+  const prefs = getFocusPrefs();
+  const minutes = mode === 'focus' ? prefs.focusMinutes : prefs.breakMinutes;
+  return (parseInt(minutes, 10) || 1) * 60 * 1000;
+}
+
+function stopFocusInterval() {
+  if (focusTimerState.intervalId) clearInterval(focusTimerState.intervalId);
+  focusTimerState.intervalId = null;
+}
+
+function saveFocusSession(mode, durationMs) {
+  const current = getFocusSessions();
+  setFocusSessions([{ mode, minutes: Math.round(durationMs / 60000), finishedAt: new Date().toISOString() }, ...current].slice(0, 10));
+}
+
+function updateFocusDisplay() {
+  const remaining = Math.max(0, focusTimerState.remainingMs);
+  const minutes = String(Math.floor(remaining / 60000)).padStart(2, '0');
+  const seconds = String(Math.floor((remaining % 60000) / 1000)).padStart(2, '0');
+  if (byId('focus-timer-value')) byId('focus-timer-value').textContent = `${minutes}:${seconds}`;
+  if (byId('focus-timer-mode')) byId('focus-timer-mode').textContent = focusTimerState.mode === 'focus' ? 'Deep Work' : 'Break';
+}
+
+function startFocusTimer() {
+  if (focusTimerState.running) return;
+  focusTimerState.running = true;
+  focusTimerState.endsAt = Date.now() + focusTimerState.remainingMs;
+  stopFocusInterval();
+  focusTimerState.intervalId = setInterval(() => {
+    focusTimerState.remainingMs = Math.max(0, focusTimerState.endsAt - Date.now());
+    updateFocusDisplay();
+    if (focusTimerState.remainingMs <= 0) {
+      stopFocusInterval();
+      focusTimerState.running = false;
+      saveFocusSession(focusTimerState.mode, focusTimerDuration(focusTimerState.mode));
+      focusTimerState.mode = focusTimerState.mode === 'focus' ? 'break' : 'focus';
+      focusTimerState.remainingMs = focusTimerDuration(focusTimerState.mode);
+      renderFocusTimer();
+      showToast('Focus timer complete', 'success');
+    }
+  }, 1000);
+}
+
+function pauseFocusTimer() {
+  if (!focusTimerState.running) return;
+  focusTimerState.running = false;
+  focusTimerState.remainingMs = Math.max(0, focusTimerState.endsAt - Date.now());
+  stopFocusInterval();
+  updateFocusDisplay();
+}
+
+function resetFocusTimer(mode = focusTimerState.mode) {
+  focusTimerState.mode = mode;
+  focusTimerState.running = false;
+  stopFocusInterval();
+  focusTimerState.remainingMs = focusTimerDuration(mode);
+  updateFocusDisplay();
+  renderFocusTimer();
+}
+
+function renderFocusTimer() {
+  const wrap = byId('focus-panel');
+  if (!wrap) return;
+  const sessions = getFocusSessions();
+  const prefs = getFocusPrefs();
+  wrap.innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><div class="stat-label">Mode</div><div id="focus-timer-mode" class="stat-sub">${focusTimerState.mode === 'focus' ? 'Deep Work' : 'Break'}</div></div><div id="focus-timer-value" class="stat-val">${Math.floor(focusTimerState.remainingMs / 60000).toString().padStart(2, '0')}:${Math.floor((focusTimerState.remainingMs % 60000) / 1000).toString().padStart(2, '0')}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" onclick="startFocusTimer()">Start</button><button class="btn btn-ghost" onclick="pauseFocusTimer()">Pause</button><button class="btn btn-ghost" onclick="resetFocusTimer('focus')">Reset Focus</button><button class="btn btn-ghost" onclick="resetFocusTimer('break')">Reset Break</button></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px"><div class="form-group"><label class="form-label">Focus Minutes</label><input id="focus-minutes" class="form-control" type="number" min="1" value="${prefs.focusMinutes}"></div><div class="form-group"><label class="form-label">Break Minutes</label><input id="break-minutes" class="form-control" type="number" min="1" value="${prefs.breakMinutes}"></div></div><button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="saveFocusPresets()">Save Presets</button></div><div class="card" style="margin-top:16px"><div style="font-size:13px;font-weight:600;margin-bottom:10px">Recent Sessions</div>${sessions.map((session) => `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">${session.mode} · ${session.minutes}m · ${fmtDateTime(session.finishedAt)}</div>`).join('') || '<div style="font-size:12px;color:var(--muted)">No completed sessions yet.</div>'}</div>`;
+  updateFocusDisplay();
+}
+
+async function saveFocusPresets() {
+  const prefs = {
+    focusMinutes: parseInt(byId('focus-minutes').value, 10) || 50,
+    breakMinutes: parseInt(byId('break-minutes').value, 10) || 10,
+  };
+  setFocusPrefs(prefs);
+  resetFocusTimer('focus');
+}
+
 async function checkRecurringGeneration() {
   if (!DB.recurring.length || !canEdit()) return;
-  const monthPrefix = `${TODAY.getFullYear()}-${String(TODAY.getMonth() + 1).padStart(2, '0')}`;
   const inserts = [];
-
   DB.recurring.forEach((template) => {
-    const due = mdate(Math.min(template.day, 28));
-    const exists = DB.tasks.some((task) => task.recurringTemplateId === template.id && task.due.startsWith(monthPrefix));
+    const due = getDueDateForTemplate(template, TODAY);
+    const exists = DB.tasks.some((task) => task.recurringTemplateId === template.id && task.due === due);
     if (exists) return;
-    inserts.push({
+    inserts.push(mapTaskToRow({
       id: crypto.randomUUID(),
       name: template.name,
       brief: template.brief || '',
-      client_id: template.client,
+      client: template.clientIds?.[0] || '',
+      clientIds: normalizeIdList(template.clientIds || []),
       type: template.type,
-      due_date: due,
+      start: template.startDate || '',
+      due,
       priority: template.priority,
+      slot: template.slot || 'any',
       status: 'todo',
-      assigned_user_id: template.assigned || null,
+      assigned: template.assignedIds?.[0] || '',
+      assignedIds: normalizeIdList(template.assignedIds || []),
       refs: '',
-      remind: '3',
-      recurring: true,
-      recurring_template_id: template.id,
-      updated_by: CURRENT_USER?.id || null,
-    });
+      reminders: normalizeReminderList(template.reminders || []),
+      repeatType: template.repeatType || 'monthly',
+      recurringTemplateId: template.id,
+      cleanupAfterDays: 14,
+      sourceClientTimelineId: '',
+      autoGenerated: false,
+      sortOrder: DB.tasks.length + inserts.length + 1,
+      updatedBy: CURRENT_USER?.id || '',
+    }));
   });
 
   if (!inserts.length) return;
@@ -1678,7 +2271,7 @@ async function checkRecurringGeneration() {
   }
   await loadWorkspace();
   renderAll();
-  showToast(`${inserts.length} recurring tasks generated for this month`, 'success');
+  showToast(`${inserts.length} recurring task${inserts.length > 1 ? 's' : ''} generated`, 'success');
 }
 
 async function saveEmailJS() {
@@ -1766,9 +2359,11 @@ function initApp() {
   updateMonthDisplay();
   buildNavClientList();
   byId('nav-goals-item').style.display = canViewGoals() ? '' : 'none';
+  if (byId('nav-guidelines-item')) byId('nav-guidelines-item').style.display = visibleClients().length ? '' : 'none';
+  if (!focusTimerState.running) focusTimerState.remainingMs = focusTimerDuration(focusTimerState.mode);
 
   document.querySelectorAll('[onclick="openTaskModal()"]').forEach((button) => {
-    button.style.display = canEditTaskDetails() ? '' : 'none';
+    button.style.display = canCreateTask() ? '' : 'none';
   });
   document.querySelectorAll('[onclick="openClientModal()"]').forEach((button) => {
     button.style.display = canEdit() ? '' : 'none';
@@ -1798,10 +2393,15 @@ function bindBaseEvents() {
   document.addEventListener('keydown', (event) => {
     if (!CURRENT_USER) return;
     if (event.key === 'Escape') document.querySelectorAll('.overlay.open').forEach((el) => el.classList.remove('open'));
-    if ((event.metaKey || event.ctrlKey) && event.key === 'k' && canEditTaskDetails()) {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'k' && canCreateTask()) {
       event.preventDefault();
       openTaskModal();
     }
+  });
+  byId('c-type').addEventListener('change', updateClientFormVisibility);
+  byId('c-billing-model')?.addEventListener('change', updateClientFormVisibility);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && CURRENT_USER) refreshWorkspaceFromUI().catch((error) => console.error(error));
   });
 }
 
@@ -1851,10 +2451,12 @@ Object.assign(window, {
   toggleDone,
   cycleStatus,
   cyclePriority,
+  moveMyTask,
   openClientModal,
   editClient,
   saveClient,
   deleteClient,
+  moveClient,
   openUserModal,
   editUser,
   saveUser,
@@ -1865,9 +2467,16 @@ Object.assign(window, {
   adjustGoalMetric,
   deleteGoal,
   openRecurringModal,
+  editRecurring,
   saveRecurring,
   deleteRecurring,
+  addReminderRow,
+  addTimelineRow,
   saveEmailJS,
+  saveFocusPresets,
+  startFocusTimer,
+  pauseFocusTimer,
+  resetFocusTimer,
   saveMyPassword,
   saveCalUrl,
   exportData,
