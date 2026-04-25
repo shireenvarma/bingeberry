@@ -84,6 +84,7 @@ let CURRENT_USER = null;
 let currentPage = 'dashboard';
 let activeFilters = { client: 'All', type: 'All', status: 'All', assigned: 'All' };
 let authMode = 'signin';
+let recoveringPassword = false;
 let goalMetricCount = 0;
 let recurringMetricCount = 0;
 let taskReminderCount = 0;
@@ -698,18 +699,25 @@ function showAuthScreen() {
   byId('app').classList.remove('active');
   byId('auth-screen').style.display = 'flex';
   byId('auth-pass').value = '';
+  byId('auth-pass-confirm').value = '';
 }
 
-function setAuthMode(mode) {
+function setAuthMode(mode, options = {}) {
   authMode = mode;
   const signup = mode === 'signup';
+  const recovery = mode === 'recovery';
   byId('auth-signup-fields').style.display = signup ? 'block' : 'none';
-  byId('auth-pass-confirm-wrap').style.display = signup ? 'block' : 'none';
-  byId('auth-submit-btn').textContent = signup ? 'Create Account →' : 'Sign In →';
-  byId('auth-toggle-btn').textContent = signup ? 'Back to sign in' : 'Create an account';
+  byId('auth-pass-confirm-wrap').style.display = signup || recovery ? 'block' : 'none';
+  byId('auth-submit-btn').textContent = signup ? 'Create Account →' : recovery ? 'Reset Password →' : 'Sign In →';
+  byId('auth-toggle-btn').textContent = signup ? 'Back to sign in' : recovery ? 'Back to sign in' : 'Create an account';
   byId('auth-helper-text').textContent = signup
     ? 'New team members can create their own account here. The first signup becomes admin.'
-    : 'Use your work email and password. Sessions stay active across refreshes.';
+    : recovery
+      ? 'Enter and confirm a new password for your account.'
+      : 'Use your work email and password. Sessions stay active across refreshes.';
+  byId('auth-forgot-btn').style.display = recovery || signup ? 'none' : '';
+  byId('auth-user').disabled = recovery && Boolean(options.lockEmail);
+  if (recovery && options.email) byId('auth-user').value = options.email;
   setAuthMessage('');
 }
 
@@ -721,8 +729,35 @@ async function doLogin() {
 
   const email = byId('auth-user').value.trim().toLowerCase();
   const password = byId('auth-pass').value;
-  if (!email || !password) {
+  if ((!email && authMode !== 'recovery') || !password) {
     setAuthMessage('Email and password are required.');
+    return;
+  }
+
+  if (authMode === 'recovery') {
+    const confirm = byId('auth-pass-confirm').value;
+    if (password.length < 8) {
+      setAuthMessage('Use a password with at least 8 characters.');
+      return;
+    }
+    if (password !== confirm) {
+      setAuthMessage('Password confirmation does not match.');
+      return;
+    }
+    const { data, error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      setAuthMessage(error.message);
+      return;
+    }
+    setAuthMessage('Password reset complete. Loading your workspace…', 'success');
+    byId('auth-pass').value = '';
+    byId('auth-pass-confirm').value = '';
+    recoveringPassword = false;
+    if (data.user) {
+      await hydrateFromSession(data.user);
+      return;
+    }
+    setAuthMode('signin');
     return;
   }
 
@@ -777,6 +812,25 @@ async function doLogin() {
     return;
   }
   setAuthMessage('');
+}
+
+async function requestPasswordReset() {
+  if (!SUPABASE_READY) {
+    setAuthMessage('Create supabase/config.js with your Supabase URL and anon key first.');
+    return;
+  }
+  const email = byId('auth-user').value.trim().toLowerCase();
+  if (!email) {
+    setAuthMessage('Enter your email first, then request a reset link.');
+    return;
+  }
+  const redirectTo = window.location.href.split('#')[0];
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) {
+    setAuthMessage(error.message);
+    return;
+  }
+  setAuthMessage('Password reset link sent. Check your email.', 'success');
 }
 
 async function doLogout() {
@@ -2416,6 +2470,7 @@ async function bootstrap() {
     return;
   }
 
+  recoveringPassword = window.location.hash.includes('type=recovery');
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) {
     setAuthMessage(sessionError.message);
@@ -2423,15 +2478,28 @@ async function bootstrap() {
   }
 
   if (sessionData.session?.user) {
-    await hydrateFromSession(sessionData.session.user);
+    if (recoveringPassword) {
+      showAuthScreen();
+      setAuthMode('recovery', { email: sessionData.session.user.email || '', lockEmail: true });
+    } else {
+      await hydrateFromSession(sessionData.session.user);
+    }
   } else {
     showAuthScreen();
   }
 
-  supabase.auth.onAuthStateChange(async (_event, session) => {
+  supabase.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'PASSWORD_RECOVERY' && session?.user) {
+      recoveringPassword = true;
+      showAuthScreen();
+      setAuthMode('recovery', { email: session.user.email || '', lockEmail: true });
+      return;
+    }
     if (session?.user) {
+      recoveringPassword = false;
       await hydrateFromSession(session.user);
     } else {
+      recoveringPassword = false;
       showAuthScreen();
     }
   });
@@ -2439,6 +2507,7 @@ async function bootstrap() {
 
 Object.assign(window, {
   doLogin,
+  requestPasswordReset,
   doLogout,
   toggleAuthMode: () => setAuthMode(authMode === 'signin' ? 'signup' : 'signin'),
   changeMonth,

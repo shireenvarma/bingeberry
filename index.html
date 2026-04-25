@@ -63,6 +63,8 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;}
 .btn-auth:hover { background:var(--lime2); }
 .auth-users { margin-top:20px;padding-top:20px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px; }
 .auth-user-hint { font-size:11px;color:var(--muted2);text-align:center;font-family:'DM Mono',monospace; }
+.auth-link-btn { background:none;border:none;color:var(--blue);font-size:12px;cursor:pointer;padding:0;text-align:center; }
+.auth-link-btn:hover { text-decoration:underline; }
 
 /* ─── APP SHELL ───────────────────────────── */
 #app { display:none;height:100vh;overflow:hidden;flex-direction:column; }
@@ -388,6 +390,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
       <input class="field-input" id="auth-pass-confirm" type="password" placeholder="Confirm password" autocomplete="new-password">
     </div>
     <button class="btn-auth" id="auth-submit-btn" onclick="doLogin()">Sign In →</button>
+    <button class="auth-link-btn" type="button" id="auth-forgot-btn" onclick="requestPasswordReset()">Forgot password?</button>
     <div class="auth-users">
       <div class="auth-user-hint" id="auth-helper-text">Use your work email and password. Sessions stay active across refreshes.</div>
       <button class="btn btn-ghost" type="button" id="auth-toggle-btn" onclick="toggleAuthMode()" style="width:100%;justify-content:center;">Create an account</button>
