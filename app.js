@@ -815,22 +815,43 @@ async function doLogin() {
 }
 
 async function requestPasswordReset() {
-  if (!SUPABASE_READY) {
-    setAuthMessage('Create supabase/config.js with your Supabase URL and anon key first.');
-    return;
+  const button = byId('auth-forgot-btn');
+  try {
+    if (!SUPABASE_READY) {
+      setAuthMessage('Create supabase/config.js with your Supabase URL and anon key first.');
+      showToast('Supabase is not configured', 'error');
+      return;
+    }
+
+    const email = byId('auth-user').value.trim().toLowerCase();
+    if (!email) {
+      setAuthMessage('Enter your email first, then request a reset link.');
+      byId('auth-user').focus();
+      showToast('Enter your email first', 'error');
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = 'Sending reset link…';
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) {
+      setAuthMessage(error.message);
+      showToast(error.message, 'error');
+      return;
+    }
+
+    setAuthMessage('Password reset link sent. Check your email.', 'success');
+    showToast('Password reset link sent', 'success');
+  } catch (error) {
+    console.error(error);
+    const message = error?.message || 'Unable to send password reset link.';
+    setAuthMessage(message);
+    showToast(message, 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Forgot password?';
   }
-  const email = byId('auth-user').value.trim().toLowerCase();
-  if (!email) {
-    setAuthMessage('Enter your email first, then request a reset link.');
-    return;
-  }
-  const redirectTo = window.location.href.split('#')[0];
-  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-  if (error) {
-    setAuthMessage(error.message);
-    return;
-  }
-  setAuthMessage('Password reset link sent. Check your email.', 'success');
 }
 
 async function doLogout() {
