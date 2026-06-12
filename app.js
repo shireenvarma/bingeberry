@@ -178,6 +178,22 @@ function setAuthMessage(msg = '', type = 'error') {
   el.style.background = type === 'success' ? 'rgba(95,206,138,0.1)' : 'rgba(255,127,110,0.1)';
 }
 
+function getSupabaseHostLabel() {
+  if (!CONFIG.supabaseUrl) return 'your Supabase project';
+  try {
+    return new URL(CONFIG.supabaseUrl).host;
+  } catch {
+    return CONFIG.supabaseUrl;
+  }
+}
+
+function formatAuthError(error, fallback = 'complete authentication') {
+  if (error?.message === 'Failed to fetch') {
+    return `Unable to reach Supabase at ${getSupabaseHostLabel()}. Update supabase/config.js with a live project URL and anon key.`;
+  }
+  return error?.message || `Unable to ${fallback}.`;
+}
+
 function getClient(id) {
   return DB.clients.find((c) => c.id === id) || { name: 'Unknown', color: '#888', type: '', category: '', guidelines: '' };
 }
@@ -734,84 +750,93 @@ async function doLogin() {
     return;
   }
 
-  if (authMode === 'recovery') {
-    const confirm = byId('auth-pass-confirm').value;
-    if (password.length < 8) {
-      setAuthMessage('Use a password with at least 8 characters.');
-      return;
-    }
-    if (password !== confirm) {
-      setAuthMessage('Password confirmation does not match.');
-      return;
-    }
-    const { data, error } = await supabase.auth.updateUser({ password });
-    if (error) {
-      setAuthMessage(error.message);
-      return;
-    }
-    setAuthMessage('Password reset complete. Loading your workspace…', 'success');
-    byId('auth-pass').value = '';
-    byId('auth-pass-confirm').value = '';
-    recoveringPassword = false;
-    if (data.user) {
-      await hydrateFromSession(data.user);
-      return;
-    }
-    setAuthMode('signin');
-    return;
-  }
-
-  if (authMode === 'signup') {
-    const name = byId('auth-name').value.trim();
-    const username = byId('auth-username').value.trim().toLowerCase();
-    const confirm = byId('auth-pass-confirm').value;
-
-    if (!name || !username) {
-      setAuthMessage('Full name and username are required.');
-      return;
-    }
-    if (password.length < 8) {
-      setAuthMessage('Use a password with at least 8 characters.');
-      return;
-    }
-    if (password !== confirm) {
-      setAuthMessage('Password confirmation does not match.');
-      return;
-    }
-
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          full_name: name,
-          username,
-          color: randomColor(),
-        },
-      },
-    });
-
-    if (error) {
-      setAuthMessage(error.message);
-      return;
-    }
-
-    if (!data.session) {
-      setAuthMessage('Account created. Check your email to confirm the signup before logging in.', 'success');
+  try {
+    if (authMode === 'recovery') {
+      const confirm = byId('auth-pass-confirm').value;
+      if (password.length < 8) {
+        setAuthMessage('Use a password with at least 8 characters.');
+        return;
+      }
+      if (password !== confirm) {
+        setAuthMessage('Password confirmation does not match.');
+        return;
+      }
+      const { data, error } = await supabase.auth.updateUser({ password });
+      if (error) {
+        setAuthMessage(formatAuthError(error, 'reset your password'));
+        return;
+      }
+      setAuthMessage('Password reset complete. Loading your workspace…', 'success');
+      byId('auth-pass').value = '';
+      byId('auth-pass-confirm').value = '';
+      recoveringPassword = false;
+      if (data.user) {
+        await hydrateFromSession(data.user);
+        return;
+      }
       setAuthMode('signin');
       return;
     }
 
-    setAuthMessage('Account created. Loading your workspace…', 'success');
-    return;
-  }
+    if (authMode === 'signup') {
+      const name = byId('auth-name').value.trim();
+      const username = byId('auth-username').value.trim().toLowerCase();
+      const confirm = byId('auth-pass-confirm').value;
 
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) {
-    setAuthMessage(error.message);
+      if (!name || !username) {
+        setAuthMessage('Full name and username are required.');
+        return;
+      }
+      if (password.length < 8) {
+        setAuthMessage('Use a password with at least 8 characters.');
+        return;
+      }
+      if (password !== confirm) {
+        setAuthMessage('Password confirmation does not match.');
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: name,
+            username,
+            color: randomColor(),
+          },
+        },
+      });
+
+      if (error) {
+        setAuthMessage(formatAuthError(error, 'create your account'));
+        return;
+      }
+
+      if (!data.session) {
+        setAuthMessage('Account created. Check your email to confirm the signup before logging in.', 'success');
+        setAuthMode('signin');
+        return;
+      }
+
+      setAuthMessage('Account created. Loading your workspace…', 'success');
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setAuthMessage(formatAuthError(error, 'sign in'));
+      return;
+    }
+    setAuthMessage('');
+  } catch (error) {
+    console.error(error);
+    const action = authMode === 'signup' ? 'create your account' : authMode === 'recovery' ? 'reset your password' : 'sign in';
+    const message = formatAuthError(error, action);
+    setAuthMessage(message);
+    showToast(message, 'error');
     return;
   }
-  setAuthMessage('');
 }
 
 async function requestPasswordReset() {
@@ -836,8 +861,9 @@ async function requestPasswordReset() {
     const redirectTo = `${window.location.origin}${window.location.pathname}`;
     const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
     if (error) {
-      setAuthMessage(error.message);
-      showToast(error.message, 'error');
+      const message = formatAuthError(error, 'send the password reset link');
+      setAuthMessage(message);
+      showToast(message, 'error');
       return;
     }
 
@@ -845,7 +871,7 @@ async function requestPasswordReset() {
     showToast('Password reset link sent', 'success');
   } catch (error) {
     console.error(error);
-    const message = error?.message || 'Unable to send password reset link.';
+    const message = formatAuthError(error, 'send the password reset link');
     setAuthMessage(message);
     showToast(message, 'error');
   } finally {
