@@ -62,7 +62,7 @@ const EMPTY_SETTINGS = {
   ejsService: '',
   ejsTemplate: '',
   ejsPubkey: '',
-  focusPresets: { focusMinutes: 50, breakMinutes: 10 },
+  focusPresets: { focusDuration: '00:50:00', breakDuration: '00:10:00', runningView: 'fullscreen' },
   focusSessions: {},
 };
 const USER_COLORS = ['#c8f065', '#6eb5ff', '#b48fff', '#ff7f6e', '#5fce8a', '#ffb547', '#ff6eb4'];
@@ -413,14 +413,14 @@ function focusSessionsKey() {
 
 function getFocusPrefs() {
   try {
-    return { ...EMPTY_SETTINGS.focusPresets, ...JSON.parse(localStorage.getItem(focusPrefsKey()) || '{}') };
+    return normalizeFocusPrefs(JSON.parse(localStorage.getItem(focusPrefsKey()) || '{}'));
   } catch {
     return { ...EMPTY_SETTINGS.focusPresets };
   }
 }
 
 function setFocusPrefs(value) {
-  localStorage.setItem(focusPrefsKey(), JSON.stringify(value));
+  localStorage.setItem(focusPrefsKey(), JSON.stringify(normalizeFocusPrefs(value)));
 }
 
 function getFocusSessions() {
@@ -466,6 +466,60 @@ function syncRevenueGoal() {
     { label: 'On Paper', current: onPaper, target: Math.max(existingTarget, suggestedTarget), unit: 'currency' },
     { label: 'Actual', current: actual, target: Math.max(existingTarget, suggestedTarget), unit: 'currency' },
   ];
+}
+
+function parseDurationInput(value, fallbackMs = 50 * 60 * 1000) {
+  if (typeof value === 'number' && Number.isFinite(value)) return Math.max(1000, value);
+  const raw = String(value || '').trim();
+  if (!raw) return fallbackMs;
+
+  if (/^\d+$/.test(raw)) {
+    return Math.max(1000, parseInt(raw, 10) * 60 * 1000);
+  }
+
+  const parts = raw.split(':').map((part) => part.trim());
+  if (parts.some((part) => !/^\d+$/.test(part)) || parts.length > 3) return fallbackMs;
+
+  const normalized = parts.map((part) => parseInt(part, 10));
+  let hours = 0;
+  let minutes = 0;
+  let seconds = 0;
+
+  if (normalized.length === 3) {
+    [hours, minutes, seconds] = normalized;
+  } else if (normalized.length === 2) {
+    [minutes, seconds] = normalized;
+  } else {
+    [seconds] = normalized;
+  }
+
+  const totalMs = ((hours * 3600) + (minutes * 60) + seconds) * 1000;
+  return totalMs > 0 ? totalMs : fallbackMs;
+}
+
+function formatDurationInput(durationMs) {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+function normalizeFocusPrefs(value = {}) {
+  const fallbackFocus = parseDurationInput(EMPTY_SETTINGS.focusPresets.focusDuration);
+  const fallbackBreak = parseDurationInput(EMPTY_SETTINGS.focusPresets.breakDuration);
+  const focusDuration = value.focusDuration ?? value.focusMinutes;
+  const breakDuration = value.breakDuration ?? value.breakMinutes;
+  const runningView = value.runningView === 'floating' ? 'floating' : 'fullscreen';
+  return {
+    focusDuration: formatDurationInput(parseDurationInput(focusDuration, fallbackFocus)),
+    breakDuration: formatDurationInput(parseDurationInput(breakDuration, fallbackBreak)),
+    runningView,
+  };
+}
+
+function formatTimerValue(durationMs) {
+  return formatDurationInput(durationMs);
 }
 
 function mapTaskFromRow(row) {
@@ -1449,6 +1503,8 @@ function renderAll() {
   if (currentPage === 'recurring') renderRecurring();
   if (currentPage === 'settings') renderSettings();
   if (currentPage === 'mywork') renderMyWork();
+  applyFocusFullscreenState();
+  renderFloatingFocusTimer();
 }
 
 function renderCheckboxList(containerId, items, selectedIds = [], disabled = false) {
@@ -2254,8 +2310,9 @@ function renderGuidelines() {
 
 function focusTimerDuration(mode) {
   const prefs = getFocusPrefs();
-  const minutes = mode === 'focus' ? prefs.focusMinutes : prefs.breakMinutes;
-  return (parseInt(minutes, 10) || 1) * 60 * 1000;
+  const duration = mode === 'focus' ? prefs.focusDuration : prefs.breakDuration;
+  const fallback = parseDurationInput(mode === 'focus' ? EMPTY_SETTINGS.focusPresets.focusDuration : EMPTY_SETTINGS.focusPresets.breakDuration);
+  return parseDurationInput(duration, fallback);
 }
 
 function stopFocusInterval() {
@@ -2268,18 +2325,74 @@ function saveFocusSession(mode, durationMs) {
   setFocusSessions([{ mode, minutes: Math.round(durationMs / 60000), finishedAt: new Date().toISOString() }, ...current].slice(0, 10));
 }
 
+function applyFocusFullscreenState() {
+  const active = currentPage === 'focus' && focusTimerState.running && getFocusPrefs().runningView === 'fullscreen';
+  const topbar = document.querySelector('.app-topbar');
+  const sidebar = document.querySelector('.sidebar');
+  const mainContent = document.querySelector('.main-content');
+  const focusPage = byId('page-focus');
+  const focusHeader = focusPage?.querySelector('.page-header');
+  const focusPanel = byId('focus-panel');
+
+  if (topbar) topbar.style.display = active ? 'none' : '';
+  if (sidebar) sidebar.style.display = active ? 'none' : '';
+  if (mainContent) {
+    mainContent.style.overflowY = active ? 'hidden' : '';
+    mainContent.style.background = active ? '#050506' : '';
+  }
+  if (focusPage) {
+    focusPage.style.padding = active ? '0' : '';
+    focusPage.style.height = active ? '100vh' : '';
+    focusPage.style.display = active ? 'block' : '';
+  }
+  if (focusHeader) focusHeader.style.display = active ? 'none' : '';
+  if (focusPanel) {
+    focusPanel.style.height = active ? '100vh' : '';
+    focusPanel.style.margin = active ? '0' : '';
+  }
+}
+
+function renderFloatingFocusTimer() {
+  let floating = byId('focus-floating-window');
+  if (!floating) {
+    floating = document.createElement('div');
+    floating.id = 'focus-floating-window';
+    document.body.appendChild(floating);
+  }
+
+  const prefs = getFocusPrefs();
+  const active = focusTimerState.running && prefs.runningView === 'floating' && currentPage !== 'focus';
+  if (!active) {
+    floating.style.display = 'none';
+    floating.innerHTML = '';
+    return;
+  }
+
+  floating.style.display = 'block';
+  floating.style.position = 'fixed';
+  floating.style.right = '20px';
+  floating.style.bottom = '20px';
+  floating.style.width = 'min(360px, calc(100vw - 24px))';
+  floating.style.maxWidth = 'calc(100vw - 24px)';
+  floating.style.zIndex = '180';
+  floating.innerHTML = `<div class="card" style="background:linear-gradient(180deg, rgba(17,17,19,0.98) 0%, rgba(10,10,11,0.98) 100%);box-shadow:0 18px 48px rgba(0,0,0,0.38);border-color:rgba(200,240,101,0.18)"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px"><div><div class="stat-label" style="margin-bottom:6px">${focusTimerState.mode === 'focus' ? 'LOCKED IN' : 'BREAK'}</div><div data-focus-mode style="font-size:14px;font-weight:600">${focusTimerState.mode === 'focus' ? 'Deep Work' : 'Break'}</div></div><button class="btn btn-ghost btn-sm" style="padding:4px 10px" onclick="showPage('focus')">Open</button></div><div data-focus-value style="font-family:'Syne',sans-serif;font-size:54px;line-height:0.95;letter-spacing:-0.04em;margin-bottom:14px">${formatTimerValue(focusTimerState.remainingMs)}</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" onclick="pauseFocusTimer()">Pause</button><button class="btn btn-ghost btn-sm" onclick="resetFocusTimer('${focusTimerState.mode}')">Reset</button><button class="btn btn-ghost btn-sm" onclick="setFocusRunningView('fullscreen', true)">Full Screen</button></div></div>`;
+}
+
 function updateFocusDisplay() {
   const remaining = Math.max(0, focusTimerState.remainingMs);
-  const minutes = String(Math.floor(remaining / 60000)).padStart(2, '0');
-  const seconds = String(Math.floor((remaining % 60000) / 1000)).padStart(2, '0');
-  if (byId('focus-timer-value')) byId('focus-timer-value').textContent = `${minutes}:${seconds}`;
-  if (byId('focus-timer-mode')) byId('focus-timer-mode').textContent = focusTimerState.mode === 'focus' ? 'Deep Work' : 'Break';
+  document.querySelectorAll('[data-focus-value]').forEach((el) => {
+    el.textContent = formatTimerValue(remaining);
+  });
+  document.querySelectorAll('[data-focus-mode]').forEach((el) => {
+    el.textContent = focusTimerState.mode === 'focus' ? 'Deep Work' : 'Break';
+  });
 }
 
 function startFocusTimer() {
   if (focusTimerState.running) return;
   focusTimerState.running = true;
   focusTimerState.endsAt = Date.now() + focusTimerState.remainingMs;
+  renderFocusTimer();
   stopFocusInterval();
   focusTimerState.intervalId = setInterval(() => {
     focusTimerState.remainingMs = Math.max(0, focusTimerState.endsAt - Date.now());
@@ -2301,7 +2414,7 @@ function pauseFocusTimer() {
   focusTimerState.running = false;
   focusTimerState.remainingMs = Math.max(0, focusTimerState.endsAt - Date.now());
   stopFocusInterval();
-  updateFocusDisplay();
+  renderFocusTimer();
 }
 
 function resetFocusTimer(mode = focusTimerState.mode) {
@@ -2313,20 +2426,38 @@ function resetFocusTimer(mode = focusTimerState.mode) {
   renderFocusTimer();
 }
 
+function setFocusRunningView(mode, openFocusPage = false) {
+  const prefs = getFocusPrefs();
+  prefs.runningView = mode === 'floating' ? 'floating' : 'fullscreen';
+  setFocusPrefs(prefs);
+  if (prefs.runningView === 'fullscreen' && openFocusPage && currentPage !== 'focus') {
+    showPage('focus');
+    return;
+  }
+  renderFocusTimer();
+}
+
 function renderFocusTimer() {
   const wrap = byId('focus-panel');
   if (!wrap) return;
   const sessions = getFocusSessions();
   const prefs = getFocusPrefs();
-  wrap.innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><div class="stat-label">Mode</div><div id="focus-timer-mode" class="stat-sub">${focusTimerState.mode === 'focus' ? 'Deep Work' : 'Break'}</div></div><div id="focus-timer-value" class="stat-val">${Math.floor(focusTimerState.remainingMs / 60000).toString().padStart(2, '0')}:${Math.floor((focusTimerState.remainingMs % 60000) / 1000).toString().padStart(2, '0')}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" onclick="startFocusTimer()">Start</button><button class="btn btn-ghost" onclick="pauseFocusTimer()">Pause</button><button class="btn btn-ghost" onclick="resetFocusTimer('focus')">Reset Focus</button><button class="btn btn-ghost" onclick="resetFocusTimer('break')">Reset Break</button></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px"><div class="form-group"><label class="form-label">Focus Minutes</label><input id="focus-minutes" class="form-control" type="number" min="1" value="${prefs.focusMinutes}"></div><div class="form-group"><label class="form-label">Break Minutes</label><input id="break-minutes" class="form-control" type="number" min="1" value="${prefs.breakMinutes}"></div></div><button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="saveFocusPresets()">Save Presets</button></div><div class="card" style="margin-top:16px"><div style="font-size:13px;font-weight:600;margin-bottom:10px">Recent Sessions</div>${sessions.map((session) => `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">${session.mode} · ${session.minutes}m · ${fmtDateTime(session.finishedAt)}</div>`).join('') || '<div style="font-size:12px;color:var(--muted)">No completed sessions yet.</div>'}</div>`;
+  if (focusTimerState.running && prefs.runningView === 'fullscreen') {
+    wrap.innerHTML = `<div class="card" style="min-height:100vh;border:none;border-radius:0;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:40px;background:radial-gradient(circle at 50% 20%, rgba(200,240,101,0.14), transparent 38%), linear-gradient(180deg, #0b0b0d 0%, #050506 100%);"><div class="stat-label" style="font-size:14px;letter-spacing:0.18em;margin-bottom:18px">${focusTimerState.mode === 'focus' ? 'LOCKED IN' : 'BREAK'}</div><div data-focus-mode class="stat-sub" style="font-size:18px;margin-bottom:20px;color:var(--text)">${focusTimerState.mode === 'focus' ? 'Deep Work' : 'Break'}</div><div data-focus-value class="stat-val" style="font-size:min(18vw,160px);line-height:0.95;margin-bottom:28px;font-family:'Syne',sans-serif">${formatTimerValue(focusTimerState.remainingMs)}</div><div style="font-size:14px;color:var(--muted);max-width:440px;margin-bottom:28px">Stay on this screen and work until the countdown hits zero.</div><div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center"><button class="btn btn-primary" onclick="pauseFocusTimer()">Pause</button><button class="btn btn-ghost" onclick="resetFocusTimer('${focusTimerState.mode}')">Reset</button><button class="btn btn-ghost" onclick="setFocusRunningView('floating')">Floating Window</button></div></div>`;
+  } else {
+    wrap.innerHTML = `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div><div class="stat-label">Mode</div><div data-focus-mode class="stat-sub">${focusTimerState.mode === 'focus' ? 'Deep Work' : 'Break'}</div></div><div data-focus-value class="stat-val">${formatTimerValue(focusTimerState.remainingMs)}</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" onclick="startFocusTimer()">Start</button><button class="btn btn-ghost" onclick="pauseFocusTimer()">Pause</button><button class="btn btn-ghost" onclick="resetFocusTimer('focus')">Reset Focus</button><button class="btn btn-ghost" onclick="resetFocusTimer('break')">Reset Break</button></div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:16px"><div class="form-group"><label class="form-label">Focus Time</label><input id="focus-duration" class="form-control" type="text" inputmode="numeric" placeholder="HH:MM:SS" value="${prefs.focusDuration}"><div class="form-hint">Use <code style="font-family:'DM Mono',monospace;background:var(--s3);padding:1px 5px;border-radius:3px;">HH:MM:SS</code>.</div></div><div class="form-group"><label class="form-label">Break Time</label><input id="break-duration" class="form-control" type="text" inputmode="numeric" placeholder="HH:MM:SS" value="${prefs.breakDuration}"><div class="form-hint">Example: <code style="font-family:'DM Mono',monospace;background:var(--s3);padding:1px 5px;border-radius:3px;">00:10:00</code>.</div></div><div class="form-group"><label class="form-label">Running View</label><select id="focus-running-view" class="form-control"><option value="fullscreen"${prefs.runningView === 'fullscreen' ? ' selected' : ''}>Full Screen</option><option value="floating"${prefs.runningView === 'floating' ? ' selected' : ''}>Floating Window</option></select><div class="form-hint">Floating lets you work on dashboard pages while the timer stays visible.</div></div></div><button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="saveFocusPresets()">Save Presets</button></div><div class="card" style="margin-top:16px"><div style="font-size:13px;font-weight:600;margin-bottom:10px">Recent Sessions</div>${sessions.map((session) => `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">${session.mode} · ${session.minutes}m · ${fmtDateTime(session.finishedAt)}</div>`).join('') || '<div style="font-size:12px;color:var(--muted)">No completed sessions yet.</div>'}</div>`;
+  }
+  applyFocusFullscreenState();
+  renderFloatingFocusTimer();
   updateFocusDisplay();
 }
 
 async function saveFocusPresets() {
-  const prefs = {
-    focusMinutes: parseInt(byId('focus-minutes').value, 10) || 50,
-    breakMinutes: parseInt(byId('break-minutes').value, 10) || 10,
-  };
+  const prefs = normalizeFocusPrefs({
+    focusDuration: byId('focus-duration')?.value,
+    breakDuration: byId('break-duration')?.value,
+    runningView: byId('focus-running-view')?.value,
+  });
   setFocusPrefs(prefs);
   resetFocusTimer('focus');
 }
@@ -2593,6 +2724,7 @@ Object.assign(window, {
   startFocusTimer,
   pauseFocusTimer,
   resetFocusTimer,
+  setFocusRunningView,
   saveMyPassword,
   saveCalUrl,
   exportData,
