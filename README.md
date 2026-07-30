@@ -1,4 +1,4 @@
-# Binge Berry
+# BingeBerry
 
 This dashboard now uses Supabase for:
 
@@ -15,8 +15,9 @@ This dashboard now uses Supabase for:
 2. In the Supabase SQL editor, run [`supabase/schema.sql`](/Users/sanchit/IdeaProjects/bingeberry/supabase/schema.sql).
    If you already set up the older version, rerun the updated schema file to add the new fields, backfills, indexes, and RLS policies.
 3. Copy [`supabase/config.example.js`](/Users/sanchit/IdeaProjects/bingeberry/supabase/config.example.js) to [`supabase/config.js`](/Users/sanchit/IdeaProjects/bingeberry/supabase/config.js) and fill in your project URL and anon key.
-4. Serve the project over a local web server from the repo root.
-5. Open `index.html` through that server.
+4. Start the local server from the repo root with `npm start`.
+5. Open [http://127.0.0.1:4174](http://127.0.0.1:4174) in your browser.
+6. Do not open `index.html` directly as a `file://` page. Supabase auth will fail there.
 
 ## Auth model
 

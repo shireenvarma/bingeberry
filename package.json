@@ -1,0 +1,9 @@
+{
+  "name": "bingeberry",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve-local.mjs",
+    "dev": "node scripts/serve-local.mjs"
+  }
+}

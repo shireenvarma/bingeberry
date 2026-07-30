@@ -1,5 +1,6 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { BINGEBERRY_CONFIG } from './supabase/config.js';
+import { attachTaskDragAndDrop } from './task-dnd.js';
 
 const CONFIG = BINGEBERRY_CONFIG || {};
 const SUPABASE_READY = Boolean(CONFIG.supabaseUrl && CONFIG.supabaseAnonKey);
@@ -68,6 +69,9 @@ const EMPTY_SETTINGS = {
 const USER_COLORS = ['#c8f065', '#6eb5ff', '#b48fff', '#ff7f6e', '#5fce8a', '#ffb547', '#ff6eb4'];
 const DEFAULT_CLIENT_TYPES = ['Retainer', 'Project', 'Branding', 'Adhoc', 'Personal', 'Goals'];
 const DEFAULT_REMINDER_TIME = '10:00';
+const DEFAULT_TASK_VIEW_PREFS = { tasks: 'manual', week: 'deadline', month: 'deadline', mywork: 'manual' };
+const TASK_SORT_LABELS = { manual: 'Manual', priority: 'Priority', deadline: 'Deadline' };
+const TASK_PRIORITY_ORDER = { High: 0, Medium: 1, Low: 2 };
 
 let DB = {
   users: [],
@@ -178,6 +182,16 @@ function setAuthMessage(msg = '', type = 'error') {
   el.style.background = type === 'success' ? 'rgba(95,206,138,0.1)' : 'rgba(255,127,110,0.1)';
 }
 
+function authRuntimeIssue() {
+  if (window.location.protocol === 'file:') {
+    return 'Open this app through a local server, not directly as a file. Browsers block Supabase auth from file:// origins.';
+  }
+  if (!/^https?:$/.test(window.location.protocol)) {
+    return 'Open this app over http:// or https:// so Supabase auth can create a session.';
+  }
+  return '';
+}
+
 function getSupabaseHostLabel() {
   if (!CONFIG.supabaseUrl) return 'your Supabase project';
   try {
@@ -188,6 +202,10 @@ function getSupabaseHostLabel() {
 }
 
 function formatAuthError(error, fallback = 'complete authentication') {
+  const runtimeIssue = authRuntimeIssue();
+  if (runtimeIssue && error?.message === 'Failed to fetch') {
+    return runtimeIssue;
+  }
   if (error?.message === 'Failed to fetch') {
     return `Unable to reach Supabase at ${getSupabaseHostLabel()}. Update supabase/config.js with a live project URL and anon key.`;
   }
@@ -292,6 +310,45 @@ function dueDateEl(ds) {
   else if (d <= 3) cls += ' soon';
   const warn = d < 0 ? ' ⚠' : '';
   return `<span class="${cls}">${fmtDate(ds)}${warn}</span>`;
+}
+
+function priorityRank(priority) {
+  return TASK_PRIORITY_ORDER[priority] ?? 99;
+}
+
+function compareTaskDates(a, b) {
+  return new Date(`${a}T00:00:00`) - new Date(`${b}T00:00:00`);
+}
+
+function compareTaskDoneState(a, b) {
+  if (a.status === 'done' && b.status !== 'done') return 1;
+  if (b.status === 'done' && a.status !== 'done') return -1;
+  return 0;
+}
+
+function compareTasksManual(a, b) {
+  return a.sortOrder - b.sortOrder || compareTaskDates(a.due, b.due) || priorityRank(a.priority) - priorityRank(b.priority) || a.name.localeCompare(b.name);
+}
+
+function compareTasksByPriority(a, b) {
+  return priorityRank(a.priority) - priorityRank(b.priority) || compareTaskDates(a.due, b.due) || compareTasksManual(a, b);
+}
+
+function compareTasksByDeadline(a, b) {
+  return compareTaskDates(a.due, b.due) || priorityRank(a.priority) - priorityRank(b.priority) || compareTasksManual(a, b);
+}
+
+function sortTasksForView(tasks, viewKey, keepDoneLast = false) {
+  const sortMode = getTaskViewSort(viewKey);
+  return [...tasks].sort((a, b) => {
+    if (keepDoneLast) {
+      const doneState = compareTaskDoneState(a, b);
+      if (doneState) return doneState;
+    }
+    if (sortMode === 'priority') return compareTasksByPriority(a, b);
+    if (sortMode === 'deadline') return compareTasksByDeadline(a, b);
+    return compareTasksManual(a, b);
+  });
 }
 
 function normalizeChecklistValue(value, fallback = {}) {
@@ -409,6 +466,39 @@ function focusPrefsKey() {
 
 function focusSessionsKey() {
   return `bingeberry-focus-sessions-${CURRENT_USER?.id || 'guest'}`;
+}
+
+function taskViewPrefsKey() {
+  return `bingeberry-task-view-prefs-${CURRENT_USER?.id || 'guest'}`;
+}
+
+function normalizeTaskViewSort(value) {
+  return Object.prototype.hasOwnProperty.call(TASK_SORT_LABELS, value) ? value : 'manual';
+}
+
+function normalizeTaskViewPrefs(value = {}) {
+  return {
+    tasks: normalizeTaskViewSort(value.tasks ?? DEFAULT_TASK_VIEW_PREFS.tasks),
+    week: normalizeTaskViewSort(value.week ?? DEFAULT_TASK_VIEW_PREFS.week),
+    month: normalizeTaskViewSort(value.month ?? DEFAULT_TASK_VIEW_PREFS.month),
+    mywork: normalizeTaskViewSort(value.mywork ?? DEFAULT_TASK_VIEW_PREFS.mywork),
+  };
+}
+
+function getTaskViewPrefs() {
+  try {
+    return normalizeTaskViewPrefs(JSON.parse(localStorage.getItem(taskViewPrefsKey()) || '{}'));
+  } catch {
+    return { ...DEFAULT_TASK_VIEW_PREFS };
+  }
+}
+
+function setTaskViewPrefs(value) {
+  localStorage.setItem(taskViewPrefsKey(), JSON.stringify(normalizeTaskViewPrefs(value)));
+}
+
+function getTaskViewSort(viewKey = currentPage) {
+  return getTaskViewPrefs()[viewKey] || 'manual';
 }
 
 function getFocusPrefs() {
@@ -1103,7 +1193,68 @@ function renderFilterBar() {
   }
 }
 
-function taskRow(task, cols = 'full', editable = true) {
+function renderTaskTools(viewKey, targetId) {
+  const wrap = byId(targetId);
+  if (!wrap) return;
+  const sortMode = getTaskViewSort(viewKey);
+  const note = sortMode === 'manual'
+    ? 'Manual mode unlocks drag-and-drop in the last column.'
+    : sortMode === 'priority'
+      ? 'High-priority tasks rise to the top automatically.'
+      : 'The earliest deadlines appear first automatically.';
+  wrap.innerHTML = `<div class="table-tools-group"><span class="table-tools-label">Organize By</span><select class="form-control" onchange="setTaskViewSort('${viewKey}', this.value)">${Object.entries(TASK_SORT_LABELS).map(([value, label]) => `<option value="${value}"${sortMode === value ? ' selected' : ''}>${label}</option>`).join('')}</select></div><div class="table-tools-note">${note}</div>`;
+}
+
+function getTasksPageTasks() {
+  let tasks = visibleTasks();
+  if (activeFilters.client !== 'All') tasks = tasks.filter((task) => taskMatchesClient(task, activeFilters.client));
+  if (activeFilters.type !== 'All') tasks = tasks.filter((task) => task.type === activeFilters.type);
+  if (activeFilters.status === 'overdue') tasks = tasks.filter((task) => task.status !== 'done' && daysFrom(task.due) < 0);
+  if (activeFilters.assigned !== 'All') tasks = tasks.filter((task) => taskAssignedTo(task, activeFilters.assigned));
+  return tasks;
+}
+
+function getUpcomingWeekTasks() {
+  return visibleTasks().filter((task) => {
+    const dueOffset = daysFrom(task.due);
+    return dueOffset >= 0 && dueOffset <= 7;
+  });
+}
+
+function getCurrentMonthTasks() {
+  return visibleTasks().filter((task) => isSameMonth(task.due, VIEW_DATE));
+}
+
+function getMyAssignedTasks() {
+  return DB.tasks.filter((task) => taskAssignedTo(task, CURRENT_USER.id) && task.status !== 'done');
+}
+
+function getTasksForView(viewKey) {
+  if (viewKey === 'tasks') return getTasksPageTasks();
+  if (viewKey === 'week') return getUpcomingWeekTasks();
+  if (viewKey === 'month') return getCurrentMonthTasks();
+  if (viewKey === 'mywork') return getMyAssignedTasks();
+  return visibleTasks();
+}
+
+function setTaskViewSort(viewKey, sortMode) {
+  const prefs = getTaskViewPrefs();
+  prefs[viewKey] = normalizeTaskViewSort(sortMode);
+  setTaskViewPrefs(prefs);
+  renderAll();
+}
+
+function enableTaskDragAndDrop(bodyId, viewKey) {
+  const body = byId(bodyId);
+  if (!body) return;
+  attachTaskDragAndDrop(body, {
+    enabled: getTaskViewSort(viewKey) === 'manual',
+    viewKey,
+    onMove: moveTaskToTargetInView,
+  });
+}
+
+function taskRow(task, cols = 'full', editable = true, options = {}) {
   const isDone = task.status === 'done';
   const primaryClient = getClient(getPrimaryClientId(task));
   const assigneeIds = getAssignedIds(task);
@@ -1114,8 +1265,13 @@ function taskRow(task, cols = 'full', editable = true) {
   const canEditDetails = editable && canEditTaskDetails(task);
   const editBtn = canEditDetails ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="editTask('${task.id}')" title="Edit">✏️</button>` : '';
   const delBtn = editable && canEditTaskDetails(task) ? `<button class="btn btn-danger btn-sm btn-icon" onclick="deleteTask('${task.id}')" title="Delete">×</button>` : '';
-  const moveUpBtn = cols === 'team' && canManage ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="moveMyTask('${task.id}',-1)" title="Move up">↑</button>` : '';
-  const moveDownBtn = cols === 'team' && canManage ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="moveMyTask('${task.id}',1)" title="Move down">↓</button>` : '';
+  const canReorder = Boolean(
+    options.viewKey
+    && getTaskViewSort(options.viewKey) === 'manual'
+    && canManage
+    && !(options.lockDoneOrder && isDone),
+  );
+  const dragHandle = canReorder ? `<button class="btn btn-ghost btn-sm btn-icon btn-reorder drag-handle" type="button" data-drag-handle="true" title="Drag to reorder">⋮⋮</button>` : '';
   const refsHtml = task.refs
     ? task.refs
         .split(',')
@@ -1135,17 +1291,17 @@ function taskRow(task, cols = 'full', editable = true) {
   const slotMeta = task.slot && task.slot !== 'any' ? `<div class="t-notes">${slotLabel(task.slot)}</div>` : '';
 
   if (cols === 'team') {
-    return `<tr class="${isDone ? 'is-done' : ''}" id="tr-${task.id}">
+    return `<tr class="${isDone ? 'is-done' : ''}" id="tr-${task.id}" data-task-id="${task.id}">
       <td><input type="checkbox" class="ck" ${isDone ? 'checked' : ''} onchange="toggleDone('${task.id}')"></td>
       <td><div class="t-name">${task.name}</div>${task.brief ? `<div class="t-notes">${task.brief.substring(0, 60)}${task.brief.length > 60 ? '…' : ''}</div>` : ''}${slotMeta}</td>
       <td><span style="font-size:11px;color:${primaryClient.color}">${clientNames}</span></td>
       <td><span class="badge ${typeClass(task.type)}">${task.type}</span></td>
       <td>${dueDateEl(task.due)}</td>
-      <td><span class="status ${statusClass(task.status)}${statusReadonly}" ${statusAction}>${statusLabel(task.status)}</span></td><td style="white-space:nowrap">${moveUpBtn}${moveDownBtn}</td>
+      <td><span class="status ${statusClass(task.status)}${statusReadonly}" ${statusAction}>${statusLabel(task.status)}</span></td><td><div class="task-actions">${dragHandle}</div></td>
     </tr>`;
   }
 
-  return `<tr class="${isDone ? 'is-done' : ''}" id="tr-${task.id}">
+  return `<tr class="${isDone ? 'is-done' : ''}" id="tr-${task.id}" data-task-id="${task.id}">
     <td><input type="checkbox" class="ck" ${isDone ? 'checked' : ''} onchange="toggleDone('${task.id}')"></td>
     <td><div class="t-name">${task.name}${refsHtml}</div>${task.brief ? `<div class="t-notes">${task.brief.substring(0, 60)}${task.brief.length > 60 ? '…' : ''}</div>` : ''}${slotMeta}</td>
     <td><span style="font-size:12px;color:${primaryClient.color};font-weight:600">${clientNames}</span></td>
@@ -1154,15 +1310,15 @@ function taskRow(task, cols = 'full', editable = true) {
     <td>${dueDateEl(task.due)}</td>
     <td>${priorityEl}</td>
     <td><span class="status ${statusClass(task.status)}${statusReadonly}" ${statusAction}>${statusLabel(task.status)}</span></td>
-    <td style="white-space:nowrap">${editBtn}${delBtn}</td>
+    <td><div class="task-actions">${dragHandle}${editBtn}${delBtn}</div></td>
   </tr>`;
 }
 
-function fillTable(bodyId, tasks, cols = 'full') {
+function fillTable(bodyId, tasks, cols = 'full', options = {}) {
   const body = byId(bodyId);
   if (!body) return;
   const colspan = cols === 'team' ? 7 : 9;
-  body.innerHTML = tasks.length ? tasks.map((task) => taskRow(task, cols)).join('') : `<tr class="empty-row"><td colspan="${colspan}">No tasks here</td></tr>`;
+  body.innerHTML = tasks.length ? tasks.map((task) => taskRow(task, cols, true, options)).join('') : `<tr class="empty-row"><td colspan="${colspan}">No tasks here</td></tr>`;
 }
 
 function updateBadges() {
@@ -1183,12 +1339,12 @@ function updateBadges() {
 function renderDashboard() {
   const scopedTasks = visibleTasks();
   const active = scopedTasks.filter((task) => task.status !== 'done');
-  const overdue = active.filter((task) => daysFrom(task.due) < 0).sort((a, b) => new Date(a.due) - new Date(b.due));
+  const overdue = active.filter((task) => daysFrom(task.due) < 0).sort((a, b) => compareTaskDates(a.due, b.due));
   const week = active.filter((task) => {
     const d = daysFrom(task.due);
     return d >= 0 && d <= 7;
-  }).sort((a, b) => new Date(a.due) - new Date(b.due));
-  const all = [...active].sort((a, b) => new Date(a.due) - new Date(b.due));
+  }).sort((a, b) => compareTaskDates(a.due, b.due));
+  const all = [...active].sort((a, b) => compareTaskDates(a.due, b.due));
   const done = scopedTasks.filter((task) => task.status === 'done');
   const pct = scopedTasks.length ? Math.round((done.length / scopedTasks.length) * 100) : 0;
 
@@ -1212,17 +1368,10 @@ function renderDashboard() {
 }
 
 function renderTasksPage() {
-  let tasks = visibleTasks();
-  if (activeFilters.client !== 'All') tasks = tasks.filter((task) => taskMatchesClient(task, activeFilters.client));
-  if (activeFilters.type !== 'All') tasks = tasks.filter((task) => task.type === activeFilters.type);
-  if (activeFilters.status === 'overdue') tasks = tasks.filter((task) => task.status !== 'done' && daysFrom(task.due) < 0);
-  if (activeFilters.assigned !== 'All') tasks = tasks.filter((task) => taskAssignedTo(task, activeFilters.assigned));
-  tasks = tasks.sort((a, b) => {
-    if (a.status === 'done' && b.status !== 'done') return 1;
-    if (b.status === 'done' && a.status !== 'done') return -1;
-    return a.sortOrder - b.sortOrder || new Date(a.due) - new Date(b.due);
-  });
-  fillTable('main-task-body', tasks);
+  renderTaskTools('tasks', 'tasks-tools');
+  const tasks = sortTasksForView(getTasksPageTasks(), 'tasks', true);
+  fillTable('main-task-body', tasks, 'full', { viewKey: 'tasks', lockDoneOrder: true });
+  enableTaskDragAndDrop('main-task-body', 'tasks');
 }
 
 function renderWeek() {
@@ -1242,17 +1391,18 @@ function renderWeek() {
     </div>`;
   }
   byId('week-grid').innerHTML = html;
-  const weekTasks = scopedTasks.filter((task) => {
-    const d = daysFrom(task.due);
-    return d >= 0 && d <= 7;
-  }).sort((a, b) => new Date(a.due) - new Date(b.due));
-  fillTable('week-task-body', weekTasks);
+  renderTaskTools('week', 'week-tools');
+  const weekTasks = sortTasksForView(getUpcomingWeekTasks(), 'week', true);
+  fillTable('week-task-body', weekTasks, 'full', { viewKey: 'week', lockDoneOrder: true });
+  enableTaskDragAndDrop('week-task-body', 'week');
 }
 
 function renderMonth() {
   updateMonthDisplay();
-  const monthTasks = visibleTasks().filter((task) => isSameMonth(task.due, VIEW_DATE)).sort((a, b) => a.sortOrder - b.sortOrder || new Date(a.due) - new Date(b.due));
-  fillTable('month-task-body', monthTasks);
+  renderTaskTools('month', 'month-tools');
+  const monthTasks = sortTasksForView(getCurrentMonthTasks(), 'month', true);
+  fillTable('month-task-body', monthTasks, 'full', { viewKey: 'month', lockDoneOrder: true });
+  enableTaskDragAndDrop('month-task-body', 'month');
 }
 
 function renderMonthly() {
@@ -1430,8 +1580,9 @@ function renderSettings() {
 }
 
 function renderMyWork() {
-  const myTasks = DB.tasks.filter((task) => taskAssignedTo(task, CURRENT_USER.id) && task.status !== 'done').sort((a, b) => a.sortOrder - b.sortOrder || new Date(a.due) - new Date(b.due));
-  fillTable('mywork-body', myTasks, 'team');
+  const myTasks = sortTasksForView(getMyAssignedTasks(), 'mywork');
+  fillTable('mywork-body', myTasks, 'team', { viewKey: 'mywork' });
+  enableTaskDragAndDrop('mywork-body', 'mywork');
 
   const myClients = CURRENT_USER.clients.map((clientId) => DB.clients.find((client) => client.id === clientId)).filter(Boolean);
   byId('brief-grid').innerHTML = myClients.map((client) => `
@@ -1784,25 +1935,57 @@ async function cyclePriority(id) {
   await updateTaskField(task, { priority: priorityCycle(task.priority) });
 }
 
-async function moveMyTask(id, direction) {
-  const scoped = DB.tasks.filter((task) => taskAssignedTo(task, CURRENT_USER.id) && task.status !== 'done').sort((a, b) => a.sortOrder - b.sortOrder || new Date(a.due) - new Date(b.due));
-  const index = scoped.findIndex((task) => task.id === id);
-  const swapIndex = index + direction;
-  if (index < 0 || swapIndex < 0 || swapIndex >= scoped.length) return;
-  const task = scoped[index];
-  const swapTask = scoped[swapIndex];
+async function persistTaskOrder(orderedTasks) {
   try {
     await ensureSession();
-    const { error: firstError } = await supabase.from('tasks').update({ sort_order: swapTask.sortOrder }).eq('id', task.id);
-    if (firstError) throw firstError;
-    const { error: secondError } = await supabase.from('tasks').update({ sort_order: task.sortOrder }).eq('id', swapTask.id);
-    if (secondError) throw secondError;
+    const updates = orderedTasks
+      .map((task, index) => ({ id: task.id, nextOrder: index + 1 }))
+      .filter(({ id, nextOrder }) => (DB.tasks.find((item) => item.id === id)?.sortOrder || 0) !== nextOrder);
+
+    for (const update of updates) {
+      const { error } = await supabase.from('tasks').update({ sort_order: update.nextOrder }).eq('id', update.id);
+      if (error) throw error;
+    }
+
     await loadWorkspace();
-    renderMyWork();
+    renderAll();
   } catch (error) {
     console.error(error);
     showToast(error.message || 'Unable to reorder task', 'error');
   }
+}
+
+async function moveTaskToTargetInView(sourceId, targetId, placement = 'before', viewKey = 'tasks') {
+  if (getTaskViewSort(viewKey) !== 'manual') return;
+  const sourceTask = DB.tasks.find((task) => task.id === sourceId);
+  const targetTask = DB.tasks.find((task) => task.id === targetId);
+  if (!sourceTask || !targetTask || sourceId === targetId) return;
+  if (!canManageTask(sourceTask) || !canManageTask(targetTask)) return;
+  if (viewKey !== 'mywork' && sourceTask.status === 'done') return;
+  if (viewKey !== 'mywork' && targetTask.status === 'done') placement = 'before';
+
+  const orderedTasks = [...DB.tasks].sort(compareTasksManual);
+  const sourceIndex = orderedTasks.findIndex((task) => task.id === sourceId);
+  if (sourceIndex < 0) return;
+  const [movedTask] = orderedTasks.splice(sourceIndex, 1);
+  const targetIndex = orderedTasks.findIndex((task) => task.id === targetId);
+  if (targetIndex < 0) return;
+  const insertAt = targetIndex + (placement === 'after' ? 1 : 0);
+  orderedTasks.splice(insertAt, 0, movedTask);
+  await persistTaskOrder(orderedTasks);
+}
+
+async function moveTaskInView(id, direction, viewKey = 'tasks') {
+  const scoped = sortTasksForView(getTasksForView(viewKey), viewKey, viewKey !== 'mywork');
+  const index = scoped.findIndex((task) => task.id === id);
+  const targetIndex = index + direction;
+  if (index < 0 || targetIndex < 0 || targetIndex >= scoped.length) return;
+  const targetTask = scoped[targetIndex];
+  await moveTaskToTargetInView(id, targetTask.id, direction > 0 ? 'after' : 'before', viewKey);
+}
+
+async function moveMyTask(id, direction) {
+  await moveTaskInView(id, direction, 'mywork');
 }
 
 function openClientModal() {
@@ -2648,6 +2831,15 @@ async function bootstrap() {
     return;
   }
 
+  const runtimeIssue = authRuntimeIssue();
+  if (runtimeIssue) {
+    byId('auth-submit-btn').disabled = true;
+    byId('auth-toggle-btn').disabled = true;
+    byId('auth-forgot-btn').disabled = true;
+    setAuthMessage(`${runtimeIssue} Run npm start from this project and open http://127.0.0.1:4174.`, 'error');
+    return;
+  }
+
   recoveringPassword = window.location.hash.includes('type=recovery');
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) {
@@ -2725,6 +2917,8 @@ Object.assign(window, {
   pauseFocusTimer,
   resetFocusTimer,
   setFocusRunningView,
+  setTaskViewSort,
+  moveTaskInView,
   saveMyPassword,
   saveCalUrl,
   exportData,
