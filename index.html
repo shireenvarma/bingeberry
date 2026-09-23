@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BingeBerry</title>
+<link rel="icon" type="image/png" href="./assets/bingeberry-mark.png">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -69,11 +70,11 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;}
 #app { display:none;height:100vh;overflow:hidden;flex-direction:column; }
 #app.active { display:flex; }
 .app-topbar {
-  height:68px;min-height:68px;background:var(--s1);border-bottom:1px solid var(--border);
+  height:76px;min-height:76px;background:var(--s1);border-bottom:1px solid var(--border);
   display:flex;align-items:center;padding:0 20px;gap:12px;z-index:50;
 }
-.topbar-logo { display:inline-flex;align-items:center;justify-content:flex-start;width:148px;overflow:visible;margin-right:4px; }
-.topbar-logo-mark { height:44px;width:auto;display:block;transform:scale(1.55);transform-origin:left center;filter:drop-shadow(0 8px 18px rgba(0,0,0,0.26)); }
+.topbar-logo { display:inline-flex;align-items:center;justify-content:flex-start;width:116px;overflow:visible;margin-right:4px; }
+.topbar-logo-mark { height:58px;width:auto;display:block;filter:drop-shadow(0 8px 18px rgba(0,0,0,0.26)); }
 .topbar-divider { width:1px;height:20px;background:var(--border);flex-shrink:0; }
 .topbar-title { font-size:13px;font-weight:600;flex:1; }
 .topbar-month { display:flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:11px;color:var(--lime);background:rgba(200,240,101,0.08);border:1px solid rgba(200,240,101,0.18);padding:3px 6px;border-radius:20px;letter-spacing:0.06em; }
