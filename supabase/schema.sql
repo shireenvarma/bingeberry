@@ -70,6 +70,7 @@ create table if not exists public.tasks (
   source_client_timeline_id text,
   auto_generated boolean not null default false,
   sort_order integer not null default 0,
+  completed_at timestamptz,
   updated_by uuid references public.profiles (id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -102,6 +103,13 @@ alter table public.tasks add column if not exists cleanup_after_days integer not
 alter table public.tasks add column if not exists source_client_timeline_id text;
 alter table public.tasks add column if not exists auto_generated boolean not null default false;
 alter table public.tasks add column if not exists sort_order integer not null default 0;
+alter table public.tasks add column if not exists completed_at timestamptz;
+
+-- Existing completed tasks have no historical completion timestamp. Start their 24-hour
+-- retention window from their most recent update when this migration is first applied.
+update public.tasks
+set completed_at = updated_at
+where status = 'done' and completed_at is null;
 
 create or replace function public.handle_updated_at()
 returns trigger
@@ -109,6 +117,20 @@ language plpgsql
 as $$
 begin
   new.updated_at = now();
+  return new;
+end;
+$$;
+
+create or replace function public.set_task_completed_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.status = 'done' and (tg_op = 'INSERT' or old.status is distinct from 'done') then
+    new.completed_at = now();
+  elsif new.status <> 'done' then
+    new.completed_at = null;
+  end if;
   return new;
 end;
 $$;
@@ -309,6 +331,11 @@ create trigger tasks_set_updated_at
 before update on public.tasks
 for each row execute function public.handle_updated_at();
 
+drop trigger if exists tasks_set_completed_at on public.tasks;
+create trigger tasks_set_completed_at
+before insert or update of status on public.tasks
+for each row execute function public.set_task_completed_at();
+
 drop trigger if exists tasks_guard_update on public.tasks;
 create trigger tasks_guard_update
 before update on public.tasks
@@ -323,6 +350,47 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
 after insert on auth.users
 for each row execute function public.handle_new_user();
+
+create or replace function public.purge_expired_completed_tasks()
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count integer;
+begin
+  with deleted as (
+    delete from public.tasks
+    where status = 'done'
+      and completed_at <= now() - interval '24 hours'
+    returning 1
+  )
+  select count(*) into deleted_count from deleted;
+
+  return deleted_count;
+end;
+$$;
+
+revoke all on function public.purge_expired_completed_tasks() from public;
+grant execute on function public.purge_expired_completed_tasks() to authenticated;
+
+-- The hourly schedule keeps cleanup running even when no dashboard is open.
+create extension if not exists pg_cron;
+
+do $$
+begin
+  if not exists (select 1 from cron.job where jobname = 'purge_expired_completed_tasks_hourly') then
+    perform cron.schedule(
+      'purge_expired_completed_tasks_hourly',
+      '5 * * * *',
+      'select public.purge_expired_completed_tasks()'
+    );
+  end if;
+end;
+$$;
+
+notify pgrst, 'reload schema';
 
 update public.clients
 set
