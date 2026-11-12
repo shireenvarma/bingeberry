@@ -334,6 +334,11 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;}
 .modal-close:hover { color:var(--text); }
 .modal-body { padding:20px 24px; }
 .modal-footer { padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end; }
+.signup-confirmation { width:460px;text-align:center;overflow:hidden; }
+.signup-confirmation .modal-body { padding:30px 28px 24px; }
+.signup-confirmation-mark { width:54px;height:54px;margin:0 auto 16px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:rgba(200,240,101,0.12);border:1px solid rgba(200,240,101,0.28);color:var(--lime);font-size:27px; }
+.signup-confirmation-email { display:inline-block;margin:12px 0 4px;padding:6px 10px;border-radius:var(--r-sm);background:var(--s2);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;word-break:break-word; }
+.signup-confirmation-copy { color:var(--muted);font-size:13px;line-height:1.6;margin:0; }
 .form-row { display:grid;grid-template-columns:1fr 1fr;gap:14px; }
 .form-group { margin-bottom:16px; }
 .form-group:last-child { margin-bottom:0; }
@@ -415,6 +420,24 @@ textarea.form-control { resize:vertical;min-height:70px; }
     <div class="auth-users">
       <div class="auth-user-hint" id="auth-helper-text">Use your work email and password. Sessions stay active across refreshes.</div>
       <button class="btn btn-ghost" type="button" id="auth-toggle-btn" onclick="toggleAuthMode()" style="width:100%;justify-content:center;">Create an account</button>
+    </div>
+  </div>
+</div>
+
+<!-- Signup confirmation -->
+<div class="overlay" id="signup-confirmation-modal" data-dismissible="false" role="dialog" aria-modal="true" aria-labelledby="signup-confirmation-title">
+  <div class="modal signup-confirmation">
+    <div class="modal-body">
+      <div class="signup-confirmation-mark">✉</div>
+      <div class="modal-title" id="signup-confirmation-title">Confirm your email</div>
+      <p class="signup-confirmation-copy">We created your BingeBerry account. Before signing in, open the verification email we sent to:</p>
+      <div class="signup-confirmation-email" id="signup-confirmation-email"></div>
+      <p class="signup-confirmation-copy" style="margin-top:16px">Click the confirmation link, then come back here to sign in. Check spam or promotions if you do not see it within a few minutes.</p>
+      <p class="signup-confirmation-copy" id="resend-confirmation-hint" style="margin-top:14px"></p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;flex-wrap:wrap">
+      <button class="btn btn-primary" type="button" onclick="closeSignupConfirmation()">I'll confirm my email</button>
+      <button class="btn btn-ghost" type="button" id="resend-confirmation-btn" onclick="resendSignupConfirmation()">Resend confirmation email</button>
     </div>
   </div>
 </div>

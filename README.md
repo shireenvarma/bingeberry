@@ -19,6 +19,15 @@ This dashboard now uses Supabase for:
 5. Open [http://127.0.0.1:4174](http://127.0.0.1:4174) in your browser.
 6. Do not open `index.html` directly as a `file://` page. Supabase auth will fail there.
 
+## Team Signup
+
+For the deployed app, configure Supabase Dashboard → Authentication → URL Configuration with:
+
+- Site URL: `https://shireenvarma.github.io/bingeberry/`
+- Redirect URL: `https://shireenvarma.github.io/bingeberry/`
+
+New teammates must use **Create an account**, then confirm the email from Supabase before their first login. If the confirmation email has expired or the password is unknown, they can use **Forgot Password** from the sign-in screen.
+
 ## Auth model
 
 - Users sign up with their own email and password.

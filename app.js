@@ -4,6 +4,8 @@ import { attachTaskDragAndDrop } from './task-dnd.js';
 
 const CONFIG = BINGEBERRY_CONFIG || {};
 const SUPABASE_READY = Boolean(CONFIG.supabaseUrl && CONFIG.supabaseAnonKey);
+// Supabase consumes the URL fragment during client initialization.
+const INITIAL_PASSWORD_RECOVERY = new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery';
 const supabase = SUPABASE_READY
   ? createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey, {
       auth: {
@@ -72,6 +74,8 @@ const DEFAULT_REMINDER_TIME = '10:00';
 const DEFAULT_TASK_VIEW_PREFS = { tasks: 'manual', week: 'deadline', month: 'deadline', mywork: 'manual' };
 const TASK_SORT_LABELS = { manual: 'Manual', priority: 'Priority', deadline: 'Deadline' };
 const TASK_PRIORITY_ORDER = { High: 0, Medium: 1, Low: 2 };
+const PENDING_SIGNUP_CONFIRMATION_WINDOW_MS = 30 * 60 * 1000;
+const RESEND_CONFIRMATION_COOLDOWN_MS = 60 * 1000;
 
 let DB = {
   users: [],
@@ -87,8 +91,11 @@ let DB = {
 let CURRENT_USER = null;
 let currentPage = 'dashboard';
 let activeFilters = { client: 'All', type: 'All', status: 'All', assigned: 'All' };
+let signupConfirmationEmail = '';
+let resendConfirmationAvailableAt = 0;
+let resendConfirmationTimer = null;
 let authMode = 'signin';
-let recoveringPassword = false;
+let recoveringPassword = INITIAL_PASSWORD_RECOVERY;
 let goalMetricCount = 0;
 let recurringMetricCount = 0;
 let taskReminderCount = 0;
@@ -208,6 +215,12 @@ function formatAuthError(error, fallback = 'complete authentication') {
   }
   if (error?.message === 'Failed to fetch') {
     return `Unable to reach Supabase at ${getSupabaseHostLabel()}. Update supabase/config.js with a live project URL and anon key.`;
+  }
+  if (/invalid login credentials/i.test(error?.message || '')) {
+    return 'Email or password did not match. If you just created an account, confirm the signup email first. Otherwise use Forgot Password to set a new password.';
+  }
+  if (/email rate limit exceeded|over_email_send_rate_limit/i.test(error?.message || '')) {
+    return 'A confirmation email was requested too many times. Use an email already received, or wait for Supabase to reset the email limit before resending.';
   }
   return error?.message || `Unable to ${fallback}.`;
 }
@@ -894,6 +907,106 @@ function setAuthMode(mode, options = {}) {
   setAuthMessage('');
 }
 
+function formatConfirmationCountdown(remainingMs) {
+  return `${Math.max(1, Math.ceil(remainingMs / 1000))}s`;
+}
+
+function clearResendConfirmationTimer() {
+  if (resendConfirmationTimer) {
+    clearInterval(resendConfirmationTimer);
+    resendConfirmationTimer = null;
+  }
+}
+
+function renderResendConfirmationState() {
+  const button = byId('resend-confirmation-btn');
+  const hint = byId('resend-confirmation-hint');
+  if (!button || !hint) return;
+
+  const remainingMs = resendConfirmationAvailableAt - Date.now();
+  if (remainingMs > 0) {
+    button.disabled = true;
+    button.textContent = `Resend available in ${formatConfirmationCountdown(remainingMs)}`;
+    hint.textContent = 'Please wait before requesting another email.';
+    return;
+  }
+
+  clearResendConfirmationTimer();
+  button.disabled = false;
+  button.textContent = 'Resend confirmation email';
+  hint.textContent = 'Still cannot find it? You can request one more confirmation email.';
+}
+
+function startResendConfirmationCooldown(sentAt = Date.now()) {
+  resendConfirmationAvailableAt = sentAt + RESEND_CONFIRMATION_COOLDOWN_MS;
+  clearResendConfirmationTimer();
+  renderResendConfirmationState();
+  if (resendConfirmationAvailableAt > Date.now()) {
+    resendConfirmationTimer = setInterval(renderResendConfirmationState, 1000);
+  }
+}
+
+function openSignupConfirmation(email, sentAt = Date.now()) {
+  byId('auth-pass').value = '';
+  byId('auth-pass-confirm').value = '';
+  signupConfirmationEmail = email;
+  byId('signup-confirmation-email').textContent = email;
+  openModal('signup-confirmation-modal');
+  startResendConfirmationCooldown(sentAt);
+}
+
+function pendingSignupConfirmationKey(email) {
+  return `bingeberry-signup-confirmation-${email}`;
+}
+
+function getPendingSignupConfirmationSentAt(email) {
+  const key = pendingSignupConfirmationKey(email);
+  const sentAt = Number(localStorage.getItem(key));
+  if (!sentAt) return 0;
+  if (Date.now() - sentAt >= PENDING_SIGNUP_CONFIRMATION_WINDOW_MS) {
+    localStorage.removeItem(key);
+    return 0;
+  }
+  return sentAt;
+}
+
+function rememberPendingSignupConfirmation(email, sentAt = Date.now()) {
+  localStorage.setItem(pendingSignupConfirmationKey(email), String(sentAt));
+  return sentAt;
+}
+
+function closeSignupConfirmation() {
+  clearResendConfirmationTimer();
+  closeModal('signup-confirmation-modal');
+  byId('auth-user').focus();
+}
+
+async function resendSignupConfirmation() {
+  if (!signupConfirmationEmail || Date.now() < resendConfirmationAvailableAt) return;
+  const button = byId('resend-confirmation-btn');
+  const hint = byId('resend-confirmation-hint');
+  button.disabled = true;
+  button.textContent = 'Sending confirmation email...';
+  hint.textContent = '';
+
+  try {
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: signupConfirmationEmail,
+      options: { emailRedirectTo: `${window.location.origin}${window.location.pathname}` },
+    });
+    if (error) throw error;
+    const sentAt = rememberPendingSignupConfirmation(signupConfirmationEmail);
+    startResendConfirmationCooldown(sentAt);
+    hint.textContent = 'A new confirmation email was sent. Check spam or promotions too.';
+  } catch (error) {
+    const message = formatAuthError(error, 'resend the confirmation email');
+    hint.textContent = message;
+    button.disabled = false;
+    button.textContent = 'Resend confirmation email';
+  }
+}
+
 async function doLogin() {
   if (!SUPABASE_READY) {
     setAuthMessage('Create supabase/config.js with your Supabase URL and anon key first.');
@@ -953,10 +1066,18 @@ async function doLogin() {
         return;
       }
 
+      const pendingConfirmationSentAt = getPendingSignupConfirmationSentAt(email);
+      if (pendingConfirmationSentAt) {
+        setAuthMode('signin');
+        openSignupConfirmation(email, pendingConfirmationSentAt);
+        return;
+      }
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
+          emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
           data: {
             full_name: name,
             username,
@@ -971,8 +1092,9 @@ async function doLogin() {
       }
 
       if (!data.session) {
-        setAuthMessage('Account created. Check your email to confirm the signup before logging in.', 'success');
+        const sentAt = rememberPendingSignupConfirmation(email);
         setAuthMode('signin');
+        openSignupConfirmation(email, sentAt);
         return;
       }
 
@@ -2903,12 +3025,14 @@ function bindBaseEvents() {
   });
   document.querySelectorAll('.overlay').forEach((el) => {
     el.addEventListener('click', (event) => {
-      if (event.target === el) el.classList.remove('open');
+      if (event.target === el && el.dataset.dismissible !== 'false') el.classList.remove('open');
     });
   });
   document.addEventListener('keydown', (event) => {
     if (!CURRENT_USER) return;
-    if (event.key === 'Escape') document.querySelectorAll('.overlay.open').forEach((el) => el.classList.remove('open'));
+    if (event.key === 'Escape') document.querySelectorAll('.overlay.open').forEach((el) => {
+      if (el.dataset.dismissible !== 'false') el.classList.remove('open');
+    });
     if ((event.metaKey || event.ctrlKey) && event.key === 'k' && canCreateTask()) {
       event.preventDefault();
       openTaskModal();
@@ -2941,7 +3065,6 @@ async function bootstrap() {
     return;
   }
 
-  recoveringPassword = window.location.hash.includes('type=recovery');
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
   if (sessionError) {
     setAuthMessage(sessionError.message);
@@ -2960,10 +3083,14 @@ async function bootstrap() {
   }
 
   supabase.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'PASSWORD_RECOVERY' && session?.user) {
-      recoveringPassword = true;
-      showAuthScreen();
-      setAuthMode('recovery', { email: session.user.email || '', lockEmail: true });
+    if (event === 'PASSWORD_RECOVERY') recoveringPassword = true;
+    if (recoveringPassword && session?.user) {
+      // Session refresh and INITIAL_SESSION must not bypass the password form
+      // or erase a password the user is currently typing.
+      if (authMode !== 'recovery') {
+        showAuthScreen();
+        setAuthMode('recovery', { email: session.user.email || '', lockEmail: true });
+      }
       return;
     }
     if (session?.user) {
@@ -2981,6 +3108,8 @@ Object.assign(window, {
   requestPasswordReset,
   doLogout,
   toggleAuthMode: () => setAuthMode(authMode === 'signin' ? 'signup' : 'signin'),
+  closeSignupConfirmation,
+  resendSignupConfirmation,
   changeMonth,
   showPage,
   setFilter,
