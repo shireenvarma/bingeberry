@@ -514,11 +514,7 @@ create policy "tasks_select_by_role"
 on public.tasks
 for select
 to authenticated
-using (
-  public.is_admin()
-  or auth.uid() = any(coalesce(assigned_user_ids, '{}'::uuid[]))
-  or (public.is_manager() and public.has_any_client_assignment(coalesce(client_ids, '{}'::uuid[])))
-);
+using (true);
 
 drop policy if exists "tasks_insert_by_role" on public.tasks;
 create policy "tasks_insert_by_role"

@@ -1,6 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { BINGEBERRY_CONFIG } from './supabase/config.js';
 import { attachTaskDragAndDrop } from './task-dnd.js';
+import { taskBriefContent } from './task-content.js';
 
 const CONFIG = BINGEBERRY_CONFIG || {};
 const SUPABASE_READY = Boolean(CONFIG.supabaseUrl && CONFIG.supabaseAnonKey);
@@ -91,6 +92,8 @@ let DB = {
 let CURRENT_USER = null;
 let currentPage = 'dashboard';
 let activeFilters = { client: 'All', type: 'All', status: 'All', assigned: 'All' };
+const selectedTaskIds = new Set();
+let deletingTasks = false;
 let signupConfirmationEmail = '';
 let resendConfirmationAvailableAt = 0;
 let resendConfirmationTimer = null;
@@ -257,18 +260,19 @@ function visibleClients() {
 
 function visibleTasks() {
   if (!CURRENT_USER) return [];
-  if (CURRENT_USER.role === 'admin') return [...DB.tasks];
-  if (CURRENT_USER.role === 'manager') {
-    return DB.tasks.filter(
-      (task) => taskAssignedTo(task, CURRENT_USER.id) || getClientIds(task).some((id) => CURRENT_USER.clients.includes(id)),
-    );
-  }
-  return DB.tasks.filter((task) => taskAssignedTo(task, CURRENT_USER.id));
+  return [...DB.tasks];
 }
 
 function canManageTask(task) {
   if (!CURRENT_USER || !task) return false;
-  return CURRENT_USER.role === 'admin' || CURRENT_USER.role === 'manager' || taskAssignedTo(task, CURRENT_USER.id);
+  return CURRENT_USER.role === 'admin'
+    || (CURRENT_USER.role === 'manager' && getClientIds(task).some((id) => CURRENT_USER.clients.includes(id)))
+    || taskAssignedTo(task, CURRENT_USER.id);
+}
+
+function canDeleteTask(task) {
+  return Boolean(task && (isAdmin() || (CURRENT_USER?.role === 'manager'
+    && getClientIds(task).some((id) => CURRENT_USER.clients.includes(id)))));
 }
 
 function canEditTaskDetails() {
@@ -881,6 +885,7 @@ function showApp() {
 }
 
 function showAuthScreen() {
+  selectedTaskIds.clear();
   CURRENT_USER = null;
   byId('app').classList.remove('active');
   byId('auth-screen').style.display = 'flex';
@@ -1310,7 +1315,7 @@ function renderFilterBar() {
     bar.appendChild(ch);
   });
 
-  if (isAdmin() || CURRENT_USER?.role === 'manager') {
+  if (CURRENT_USER) {
     appendFilterSeparator(bar);
     appendFilterLabel(bar, 'OWNER:');
     assignees.forEach((uid) => {
@@ -1423,9 +1428,11 @@ function taskRow(task, cols = 'full', editable = true, options = {}) {
   const clientNames = getTaskClientNames(task);
   const assigneeNames = getTaskAssigneeNames(task);
   const canManage = editable && canManageTask(task);
-  const canEditDetails = editable && canEditTaskDetails(task);
+  const canEditDetails = editable && canEditTaskDetails(task) && canManage;
   const editBtn = canEditDetails ? `<button class="btn btn-ghost btn-sm btn-icon" onclick="editTask('${task.id}')" title="Edit">✏️</button>` : '';
-  const delBtn = editable && canEditTaskDetails(task) ? `<button class="btn btn-danger btn-sm btn-icon" onclick="deleteTask('${task.id}')" title="Delete">×</button>` : '';
+  const delBtn = editable && canDeleteTask(task) ? `<button class="btn btn-danger btn-sm btn-icon" onclick="deleteTask('${task.id}')" title="Delete">×</button>` : '';
+  const selectTask = options.viewKey === 'tasks' && canDeleteTask(task)
+    ? `<label class="task-select"><input type="checkbox" aria-label="Select task for deletion" ${selectedTaskIds.has(task.id) ? 'checked' : ''} onchange="selectTaskForDeletion('${task.id}',this.checked)"> Select</label>` : '';
   const canReorder = Boolean(
     options.viewKey
     && getTaskViewSort(options.viewKey) === 'manual'
@@ -1454,7 +1461,7 @@ function taskRow(task, cols = 'full', editable = true, options = {}) {
   if (cols === 'team') {
     return `<tr class="${isDone ? 'is-done' : ''}" id="tr-${task.id}" data-task-id="${task.id}">
       <td><input type="checkbox" class="ck" ${isDone ? 'checked' : ''} onchange="toggleDone('${task.id}')"></td>
-      <td><div class="t-name">${task.name}</div>${task.brief ? `<div class="t-notes">${task.brief.substring(0, 60)}${task.brief.length > 60 ? '…' : ''}</div>` : ''}${slotMeta}</td>
+      <td>${taskBriefContent(task)}${slotMeta}</td>
       <td><span style="font-size:11px;color:${primaryClient.color}">${clientNames}</span></td>
       <td><span class="badge ${typeClass(task.type)}">${task.type}</span></td>
       <td>${dueDateEl(task.due)}</td>
@@ -1463,8 +1470,8 @@ function taskRow(task, cols = 'full', editable = true, options = {}) {
   }
 
   return `<tr class="${isDone ? 'is-done' : ''}" id="tr-${task.id}" data-task-id="${task.id}">
-    <td><input type="checkbox" class="ck" ${isDone ? 'checked' : ''} onchange="toggleDone('${task.id}')"></td>
-    <td><div class="t-name">${task.name}${refsHtml}</div>${task.brief ? `<div class="t-notes">${task.brief.substring(0, 60)}${task.brief.length > 60 ? '…' : ''}</div>` : ''}${slotMeta}</td>
+    <td>${selectTask}<input type="checkbox" class="ck" aria-label="Mark task complete" ${isDone ? 'checked' : ''} ${canManage ? '' : 'disabled'} onchange="toggleDone('${task.id}')"></td>
+    <td>${taskBriefContent(task)}${refsHtml}${slotMeta}</td>
     <td><span style="font-size:12px;color:${primaryClient.color};font-weight:600">${clientNames}</span></td>
     <td><span class="badge ${typeClass(task.type)}">${task.type}</span></td>
     <td><div style="display:flex;align-items:center;gap:6px"><div class="avatar" style="width:22px;height:22px;font-size:9px;background:${user.color}22;color:${user.color}">${user.name.charAt(0)}</div><span style="font-size:12px;color:var(--muted)">${assigneeNames}</span></div></td>
@@ -1533,8 +1540,57 @@ function renderDashboard() {
 function renderTasksPage() {
   renderTaskTools('tasks', 'tasks-tools');
   const tasks = sortTasksForView(getTasksPageTasks(), 'tasks', true);
+  const eligible = new Set(tasks.filter(canDeleteTask).map((task) => task.id));
+  for (const id of selectedTaskIds) if (!eligible.has(id)) selectedTaskIds.delete(id);
   fillTable('main-task-body', tasks, 'full', { viewKey: 'tasks', lockDoneOrder: true, quickAdd: true });
   enableTaskDragAndDrop('main-task-body', 'tasks');
+  renderTaskSelection();
+}
+
+function renderTaskSelection() {
+  const wrap = byId('task-selection-tools');
+  const eligible = getTasksPageTasks().filter(canDeleteTask);
+  wrap.hidden = !eligible.length;
+  wrap.innerHTML = `<button class="btn btn-ghost btn-sm" onclick="selectAllTasksForDeletion()">Select all visible</button><span>${selectedTaskIds.size} selected</span><button class="btn btn-ghost btn-sm" onclick="clearTaskSelection()">Clear</button><button class="btn btn-danger btn-sm" ${!selectedTaskIds.size || deletingTasks ? 'disabled' : ''} onclick="deleteSelectedTasks()">${deletingTasks ? 'Deleting...' : 'Delete selected'}</button>`;
+}
+
+function selectTaskForDeletion(id, selected) {
+  if (!canDeleteTask(DB.tasks.find((task) => task.id === id))) return;
+  if (selected) selectedTaskIds.add(id);
+  else selectedTaskIds.delete(id);
+  renderTaskSelection();
+}
+
+function selectAllTasksForDeletion() {
+  getTasksPageTasks().filter(canDeleteTask).forEach((task) => selectedTaskIds.add(task.id));
+  renderTasksPage();
+}
+
+function clearTaskSelection() {
+  selectedTaskIds.clear();
+  renderTasksPage();
+}
+
+async function deleteSelectedTasks() {
+  const ids = [...selectedTaskIds].filter((id) => canDeleteTask(DB.tasks.find((task) => task.id === id)));
+  if (!ids.length || deletingTasks) return;
+  if (!confirm(`Permanently delete ${ids.length} selected task(s)?`)) return;
+  deletingTasks = true;
+  renderTaskSelection();
+  try {
+    await ensureSession();
+    const { data, error } = await supabase.from('tasks').delete().in('id', ids).select('id');
+    if (error) throw error;
+    selectedTaskIds.clear();
+    await loadWorkspace();
+    renderAll();
+    showToast(`${data.length} task(s) deleted`, 'success');
+  } catch (error) {
+    showToast(error.message || 'Unable to delete selected tasks', 'error');
+  } finally {
+    deletingTasks = false;
+    renderTaskSelection();
+  }
 }
 
 function renderWeek() {
@@ -2104,11 +2160,10 @@ async function saveQuickTask() {
 }
 
 async function deleteTask(id) {
-  if (!canEdit()) {
+  if (!canDeleteTask(DB.tasks.find((task) => task.id === id))) {
     showToast('Only admins and managers can delete tasks.', 'error');
     return;
   }
-  if (!confirm('Delete this task?')) return;
   try {
     const { error } = await supabase.from('tasks').delete().eq('id', id);
     if (error) throw error;
@@ -3118,6 +3173,10 @@ Object.assign(window, {
   saveTask,
   saveQuickTask,
   deleteTask,
+  selectTaskForDeletion,
+  selectAllTasksForDeletion,
+  clearTaskSelection,
+  deleteSelectedTasks,
   toggleDone,
   cycleStatus,
   cyclePriority,
