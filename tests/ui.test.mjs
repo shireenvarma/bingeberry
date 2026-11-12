@@ -8,6 +8,7 @@ import { taskBriefContent, escapeTaskText } from '../task-content.js';
 import { renderTaskFilters } from '../task-filters.js';
 import { attachTaskDragAndDrop } from '../task-dnd.js';
 import { createTaskDetails } from '../task-details.js';
+import { renderTaskBoard, BOARD_STATUSES } from '../task-board.js';
 import { resolveRequestPath } from '../scripts/serve-local.mjs';
 
 const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
@@ -16,7 +17,7 @@ function app(authClient = null) {
  const dom=new JSDOM(html,{url:'https://example.com/bingeberry/'});
  const context={...utils,window:dom.window,document:dom.window.document,localStorage:dom.window.localStorage,
   BINGEBERRY_CONFIG:authClient ? {supabaseUrl:'https://example.supabase.co',supabaseAnonKey:'test'} : {},createClient:()=>authClient,
-  taskBriefContent,escapeTaskText,renderTaskFilters,attachTaskDragAndDrop,createTaskDetails,
+  taskBriefContent,escapeTaskText,renderTaskFilters,attachTaskDragAndDrop,createTaskDetails,renderTaskBoard,BOARD_STATUSES,
   crypto:globalThis.crypto,URL:globalThis.URL,URLSearchParams,Blob,console:{...console,error:()=>{}},structuredClone,
   setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,clearInterval:()=>{},confirm:()=>true};
  vm.createContext(context);vm.runInContext(source,context);
@@ -180,5 +181,92 @@ test('task title opens a detail panel without changing list filters or scroll',(
  assert.equal(doc.getElementById('main-content').scrollTop,200);
  doc.querySelector('#task-details [data-detail-close]').click();
  assert.equal(doc.getElementById('task-details').open,false);
+ dom.window.close();
+});
+
+test('Table and Board share filters and details while preserving drafts, view and navigation',async()=>{
+ const {dom,run,context}=app();const doc=dom.window.document;
+ run(`DB.tasks=[{id:'a',name:'Campaign',brief:'Full campaign brief',clientIds:['brand'],assignedIds:['user'],type:'Personal',status:'progress',priority:'High',due:todayStr,sortOrder:1},
+ {id:'b',name:'Other work',clientIds:[],assignedIds:[],type:'Personal',status:'todo',priority:'Low',due:todayStr,sortOrder:2}];
+ bindBaseEvents();showPage('tasks');`);
+ doc.getElementById('qa-name').value='Unsaved task';
+ context.setTaskLayout('board');context.setFilter('client','brand');
+ assert.equal(doc.getElementById('task-table-view').hidden,true);
+ assert.equal(doc.getElementById('task-board').hidden,false);
+ assert.equal(doc.querySelectorAll('#task-board .board-card').length,1);
+ doc.querySelector('#task-board [data-open-task="a"]').click();
+ assert.equal(doc.getElementById('detail-brief').value,'Full campaign brief');
+ doc.querySelector('#task-details [data-detail-close]').click();
+ run('loadWorkspace=async()=>{}');await context.refreshWorkspaceFromUI({silent:true});
+ assert.equal(context.getTaskLayout(),'board');assert.equal(run('activeFilters.client'),'brand');assert.equal(run('currentPage'),'tasks');
+ context.setTaskLayout('table');assert.equal(doc.getElementById('qa-name').value,'Unsaved task');
+ context.setTaskHistory('archived');context.setTaskHistory('active');assert.equal(doc.getElementById('qa-name').value,'Unsaved task');
+ assert.equal(doc.getElementById('task-view-table').getAttribute('aria-pressed'),'true');
+ assert.equal(doc.getElementById('task-board').hidden,true);
+ dom.window.close();
+});
+
+test('team members cannot use Quick Add but can open normal Add Task',async()=>{
+ const {dom,run,context}=app();
+ run(`CURRENT_USER.role='team';renderTasksPage();rpc=()=>{throw Error('Unexpected quick-add request')};`);
+ assert.equal(dom.window.document.getElementById('qa-name'),null);
+ assert.equal(context.canCreateTask(),true);
+ await context.saveQuickTask();
+ context.openTaskModal();
+ assert.ok(dom.window.document.getElementById('task-modal').classList.contains('open'));
+ run("CURRENT_USER.role='manager';renderTasksPage()");
+ assert.ok(dom.window.document.getElementById('qa-name'));
+ dom.window.close();
+});
+
+test('archived work is excluded from current views but can be filtered and opened in history',()=>{
+ const {dom,run,context}=app();
+ run(`DB.tasks=[{id:'a',name:'Retained work',brief:'Old brief',refs:'https://pin.it/concept',clientIds:['brand'],assignedIds:['user'],type:'Personal',status:'done',priority:'Medium',due:todayStr,sortOrder:1,archivedAt:'2026-11-12T10:00:00Z'}];showPage('tasks');`);
+ assert.equal(context.visibleTasks().length,0);assert.equal(context.getTasksPageTasks().length,0);
+ context.setTaskHistory('archived');
+ assert.equal(context.getTasksPageTasks().length,1);assert.equal(dom.window.document.getElementById('qa-name'),null);
+ context.setFilter('assigned','user');context.setTaskLayout('board');
+ assert.equal(dom.window.document.querySelectorAll('#task-board .board-card').length,1);
+ context.openTaskDetails('a');
+ assert.equal(dom.window.document.getElementById('detail-brief').value,'Old brief');
+ assert.equal(dom.window.document.querySelector('#task-details a').href,'https://pin.it/concept');
+ dom.window.close();
+});
+
+test('Board status moves persist only status, detect conflicts and block unauthorized changes',async()=>{
+ const calls=[];let conflict=false;let fail=false;let finish;
+ const row={id:'a',name:'Campaign',client_ids:['brand'],assigned_user_ids:['user'],type:'Personal',status:'todo',priority:'High',due_date:'2026-11-13',sort_order:1,updated_at:'2026-11-13T10:00:00Z'};
+ const authClient={auth:{getSession:async()=>({data:{session:{user:{id:'user'}}}})},from:table=>{
+  const call={table,filters:[]};calls.push(call);
+  const query={update:patch=>{call.patch=patch;return query;},eq:(...args)=>{call.filters.push(args);return query;},select:async()=>{
+   await new Promise(resolve=>{finish=resolve;});
+   return {data:conflict?[]:[{...row,...call.patch,updated_at:'2026-11-13T10:01:00Z'}],error:fail?Error('Offline'):null};
+  }};return query;
+ }};
+ const {dom,run,context}=app(authClient);context.row=row;
+ run("DB.tasks=[mapTaskFromRow(row)];showPage('tasks');setTaskLayout('board');loadWorkspace=()=>{throw Error('Unexpected workspace reload')}");
+ const first=context.moveBoardTask('a','review');await new Promise(resolve=>setImmediate(resolve));
+ await context.moveBoardTask('a','done');assert.equal(calls.length,1);
+ assert.equal(dom.window.document.querySelector('#task-board .board-move').disabled,true);
+ finish();await first;
+ assert.deepEqual({...calls[0].patch},{status:'review',updated_by:'user'});
+ assert.deepEqual(calls[0].filters,[['id','a'],['updated_at',row.updated_at]]);
+ assert.equal(run('DB.tasks[0].status'),'review');assert.equal(run('DB.tasks[0].priority'),'High');
+ assert.equal(dom.window.document.querySelector('#task-board .board-move').disabled,false);
+ conflict=true;const stale=context.moveBoardTask('a','done');await new Promise(resolve=>setImmediate(resolve));finish();await stale;
+ assert.equal(run('DB.tasks[0].status'),'review');assert.match(dom.window.document.getElementById('task-board-message').textContent,/not moved/);
+ conflict=false;fail=true;const offline=context.moveBoardTask('a','done');await new Promise(resolve=>setImmediate(resolve));finish();await offline;
+ assert.equal(run('DB.tasks[0].status'),'review');assert.equal(dom.window.document.querySelector('#task-board .board-move').disabled,false);
+ run("CURRENT_USER.role='team';DB.tasks[0].assignedIds=['other'];renderTasksPage()");
+ await context.moveBoardTask('a','done');await context.moveBoardTask('a','invalid');assert.equal(calls.length,3);
+ assert.equal(dom.window.document.querySelector('#task-board .board-move'),null);
+ dom.window.close();
+});
+
+test('view switching works without localStorage and preferences stay account-specific',()=>{
+ const {dom,run,context}=app();
+ run("localStorage={setItem:()=>{throw Error('Storage unavailable')},getItem:()=>{throw Error('Storage unavailable')}};renderTasksPage();setTaskLayout('board')");
+ assert.equal(context.getTaskLayout(),'board');
+ run("CURRENT_USER={...CURRENT_USER,id:'other'}");assert.equal(context.getTaskLayout(),'table');
  dom.window.close();
 });

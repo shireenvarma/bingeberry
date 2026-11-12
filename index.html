@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BingeBerry</title>
 <link rel="stylesheet" href="./task-details.css">
+<link rel="stylesheet" href="./task-board.css">
 <link rel="icon" type="image/png" href="./assets/bingeberry-mark.png">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -545,9 +546,21 @@ textarea.form-control { resize:vertical;min-height:70px; }
           <button class="btn btn-primary" onclick="openTaskModal()">+ Add Task</button>
         </div>
         <div class="filter-bar" id="filter-bar"></div>
+        <div class="task-view-toolbar">
+          <div class="task-view-switch" role="group" aria-label="Task view">
+            <button type="button" id="task-view-table" aria-pressed="true" onclick="setTaskLayout('table')">Table</button>
+            <button type="button" id="task-view-board" aria-pressed="false" onclick="setTaskLayout('board')">Board</button>
+          </div>
+          <label class="task-history-control">Show<select class="form-control" id="task-history" onchange="setTaskHistory(this.value)"><option value="active">Current tasks</option><option value="archived">Archived tasks</option></select></label>
+        </div>
         <div class="table-tools" id="tasks-tools"></div>
+        <p class="task-view-note" id="task-view-note"></p>
+        <div id="task-table-view">
         <div class="task-selection-tools" id="task-selection-tools" hidden></div>
         <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody id="main-task-body"></tbody></table></div>
+        </div>
+        <div class="task-board" id="task-board" aria-label="Tasks by status" hidden></div>
+        <p class="sr-only" id="task-board-message" role="status" aria-live="polite"></p>
       </div>
 
       <!-- ── WEEK ── -->

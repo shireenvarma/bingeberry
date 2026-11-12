@@ -73,6 +73,7 @@ create table if not exists public.tasks (
   auto_generated boolean not null default false,
   sort_order integer not null default 0,
   completed_at timestamptz,
+  archived_at timestamptz,
   updated_by uuid references public.profiles (id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -106,6 +107,7 @@ alter table public.tasks add column if not exists source_client_timeline_id text
 alter table public.tasks add column if not exists auto_generated boolean not null default false;
 alter table public.tasks add column if not exists sort_order integer not null default 0;
 alter table public.tasks add column if not exists completed_at timestamptz;
+alter table public.tasks add column if not exists archived_at timestamptz;
 
 -- Existing completed tasks have no historical completion timestamp. Start their 24-hour
 -- retention window from their most recent update when this migration is first applied.
@@ -128,10 +130,17 @@ returns trigger
 language plpgsql
 as $$
 begin
-  if new.status = 'done' and (tg_op = 'INSERT' or old.status is distinct from 'done') then
-    new.completed_at = now();
-  elsif new.status <> 'done' then
+  if new.status <> 'done' then
     new.completed_at = null;
+    new.archived_at = null;
+  elsif tg_op = 'INSERT' then
+    new.completed_at = now();
+    new.archived_at = null;
+  elsif old.status is distinct from 'done' then
+    new.completed_at = now();
+    new.archived_at = null;
+  else
+    new.completed_at = old.completed_at;
   end if;
   return new;
 end;
@@ -335,7 +344,7 @@ for each row execute function public.handle_updated_at();
 
 drop trigger if exists tasks_set_completed_at on public.tasks;
 create trigger tasks_set_completed_at
-before insert or update of status on public.tasks
+before insert or update on public.tasks
 for each row execute function public.set_task_completed_at();
 
 drop trigger if exists tasks_guard_update on public.tasks;
@@ -360,22 +369,23 @@ security definer
 set search_path = public
 as $$
 declare
-  deleted_count integer;
+  archived_count integer;
 begin
-  with deleted as (
-    delete from public.tasks
-    where status = 'done'
+  with archived as (
+    update public.tasks set archived_at = now()
+    where status = 'done' and archived_at is null
       and completed_at <= now() - interval '24 hours'
     returning 1
   )
-  select count(*) into deleted_count from deleted;
+  select count(*) into archived_count from archived;
 
-  return deleted_count;
+  return archived_count;
 end;
 $$;
 
 revoke all on function public.purge_expired_completed_tasks() from public;
-grant execute on function public.purge_expired_completed_tasks() to authenticated;
+revoke all on function public.purge_expired_completed_tasks() from authenticated;
+grant execute on function public.purge_expired_completed_tasks() to service_role;
 
 -- The hourly schedule keeps cleanup running even when no dashboard is open.
 create extension if not exists pg_cron;

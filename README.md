@@ -65,7 +65,7 @@ without waiting for pixel-level instructions. Preserve BingeBerry's visual ident
 - Shared task visibility applies to approved members of this single agency workspace. Separate agencies must use separate Supabase projects until workspace isolation is implemented.
 - Financial values and business goals are available only to admins and people granted goals access. Only admins can change financial values or delete brands.
 - Shared edits use conflict detection; a stale edit asks the user to refresh instead of overwriting a teammate's work.
-- Reminder time and recurring generation use `Asia/Kolkata`. Completed tasks are eligible for permanent deletion after 24 hours; the hourly cleanup may run up to one hour later.
+- Reminder time and recurring generation use `Asia/Kolkata`. After the Board/archive migration, completed tasks are archived, not deleted, after 24 hours; the hourly cleanup may run up to one hour later. Archived work remains accessible through the task history selector and still uses storage.
 
 ## Deploying The Reliability Update
 
@@ -73,6 +73,7 @@ For an existing deployment, apply these in Supabase SQL Editor **before pushing 
 
 1. `supabase/migrations/20261113_reliability.sql`
 2. `supabase/migrations/20261113_reminders.sql`
+3. `supabase/migrations/20261113_task_board_archive.sql`
 
 Apply older migrations first if they have not already been installed. The new migrations are rerunnable and preserve existing account approval. They add task transactions, conflict detection, finance restrictions, approval, an occurrence ledger, and scheduled jobs. They do not delete active tasks.
 
@@ -98,7 +99,12 @@ After migration and deployment, test with an admin, manager, approved team membe
 
 - Click a task title to open its detail panel without navigating away from the list. Full briefs and references remain readable; permitted users can explicitly save name, brief, due date, status, and priority changes. Other properties use the existing advanced edit form.
 - Reference links can be entered in Quick Add or directly below the brief in the full task form. Read-only properties in the detail panel appear as text, not disabled editing controls.
-- The panel is a separate native-dialog UI module with mobile styling, focus restoration, draft protection, and optimistic conflict detection. This UI update requires no additional SQL migration.
+- All Tasks has Table and Board views with shared brand, type, owner, status, and sorting controls. The chosen view is saved per user in that browser. The Board includes To Do, In Progress, In Review, Blocked, and Completed; Blocked preserves the existing workflow.
+- Drag a card's handle between columns to update status, or use its Move to menu on mobile/keyboard. Permissions and optimistic concurrency checks apply to both. Moving a card never changes priority. Card order follows Organize by; manual ordering is managed in the table, not by dropping within a Board column.
+- Quick Add is available only to admins and managers. Team members can still use normal Add Task. Both views open the same task details panel.
+- **Before deploying this update**, run `supabase/migrations/20261113_task_board_archive.sql` after the earlier migrations. It replaces the existing cleanup function with non-destructive archiving, so no new cron job is needed. Maintenance runs server-side, not during login, and cannot be invoked by ordinary members. Without the migration, the old hourly job still deletes completed tasks. Already deleted data cannot be restored by this migration.
+- Choose Show > Archived tasks to view retained work. Change an archived task to an open status to restore it. Old briefs, references, and assignments are retained. No social publishing, client-sharing, or approval automation is added by this Board update.
+- The detail panel is a separate native-dialog UI module with mobile styling, focus restoration, draft protection, and optimistic conflict detection. The panel itself needs no SQL changes; Board archiving requires the migration above.
 
 ## Next Product Phase: Social Planner (Proposal)
 

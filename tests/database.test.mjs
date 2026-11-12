@@ -31,6 +31,9 @@ test('migrations, access boundaries and transactional task operations', async ()
  const reminders=await readFile(new URL('../supabase/migrations/20261113_reminders.sql',import.meta.url),'utf8');
  await db.exec(reminders);
  await db.exec(reminders);
+ const boardArchive=await readFile(new URL('../supabase/migrations/20261113_task_board_archive.sql',import.meta.url),'utf8');
+ await db.exec(boardArchive);
+ await db.exec(boardArchive);
  const asUser=async(id,sql)=>{await db.exec(`set role authenticated; set request.jwt.claim.sub='${id}';`);try{return await db.query(sql);}finally{await db.exec('reset role; reset request.jwt.claim.sub;');}};
  await db.exec(`insert into clients(id,name,fee,paper_fee,actual_fee) values('${brand}','Brand',500,500,0); insert into client_assignments values('${manager}','${brand}',now());`);
  assert.equal((await asUser(team,'select id,name from clients')).rows.length,1);
@@ -88,5 +91,24 @@ test('migrations, access boundaries and transactional task operations', async ()
  assert.deepEqual((await db.query("select value from workspace_documents where key='recurring_templates'")).rows[0].value,[]);
  await assert.rejects(asUser(admin,`update profiles set approved=false where id='${admin}'`),/at least one approved administrator/);
  await assert.rejects(asUser(team,'select reset_workspace()'),/Only admins/);
+ // The existing hourly cleanup target must retain completed work and archive once.
+ await asUser(team,`update tasks set status='done' where id='${taskId}'`);
+ await db.exec(`alter table tasks disable trigger tasks_set_completed_at;
+ update tasks set completed_at=now()-interval '25 hours' where id='${taskId}';
+ alter table tasks enable trigger tasks_set_completed_at;`);
+ await assert.rejects(asUser(team,'select purge_expired_completed_tasks()'),/permission denied/i);
+ assert.equal((await db.query('select purge_expired_completed_tasks() n')).rows[0].n,1);
+ assert.equal((await db.query('select purge_expired_completed_tasks() n')).rows[0].n,0);
+ let retained=(await asUser(team,`select * from tasks where id='${taskId}'`)).rows[0];
+ assert.ok(retained.archived_at);assert.equal(retained.brief,'Brief');assert.equal(retained.priority,'High');
+ // Reopening an archived task restores it without erasing any content.
+ await asUser(team,`update tasks set status='progress' where id='${taskId}'`);
+ retained=(await db.query(`select * from tasks where id='${taskId}'`)).rows[0];
+ assert.equal(retained.archived_at,null);assert.equal(retained.completed_at,null);
+ assert.equal((await db.query('select purge_expired_completed_tasks() n')).rows[0].n,0);
+ await asUser(team,`update tasks set status='done' where id='${taskId}'`);
+ assert.equal((await db.query('select purge_expired_completed_tasks() n')).rows[0].n,0);
+ const newUser='10000000-0000-0000-0000-000000000004';
+ assert.equal((await asUser(newUser,`update tasks set status='todo' where id='${taskId}' returning id`)).rows.length,0);
  } finally { await db.close(); }
 });
