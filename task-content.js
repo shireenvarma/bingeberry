@@ -5,7 +5,5 @@ export function escapeTaskText(value = '') {
 }
 
 export function taskBriefContent(task) {
-  const name = `<button type="button" class="task-open-button t-name" data-open-task="${escapeTaskText(task.id)}">${escapeTaskText(task.name)}</button>`;
-  if (!task.brief) return name;
-  return `<details class="task-brief"><summary>${name}<span class="task-brief-hint">Quick preview</span></summary><div class="task-brief-body">${escapeTaskText(task.brief)}</div></details>`;
+  return `<button type="button" class="task-open-button t-name" data-open-task="${escapeTaskText(task.id)}">${escapeTaskText(task.name)}</button>`;
 }

@@ -39,7 +39,10 @@ test('untrusted names, briefs, colors and reference URLs render as inert text',(
   assert.ok(el.textContent.includes(payload),id);
  }
  assert.equal(dom.window.document.querySelector('#main-task-body a').getAttribute('href'),'#');
- assert.equal(dom.window.document.querySelector('.task-brief-body').textContent,payload.repeat(500));
+ assert.equal(dom.window.document.querySelector('.task-brief'),null);
+ context.openTaskDetails('task');
+ assert.equal(dom.window.document.getElementById('detail-brief').value,payload.repeat(500));
+ assert.equal(dom.window.document.querySelector('#task-details img'),null);
  dom.window.close();
 });
 
@@ -68,13 +71,14 @@ test('dates use local calendar days, monthly dates clip correctly, zero revenue 
  dom.window.close();
 });
 
-test('background refresh preserves quick-add and settings drafts, scroll and expanded briefs',async()=>{
+test('background refresh preserves quick-add and settings drafts, scroll and the task panel',async()=>{
  const {dom,run,context}=app();
  run(`DB.tasks=[{id:'a',name:'Task',brief:'Full brief',clientIds:['brand'],assignedIds:['user'],type:'Personal',status:'todo',priority:'Medium',due:todayStr,sortOrder:1}]; showPage('tasks');
  loadWorkspace=async()=>{}; showToast=()=>{throw Error('Unexpected background toast')};`);
- const doc=dom.window.document;doc.getElementById('qa-name').value='Unsaved draft';doc.querySelector('.task-brief').open=true;doc.getElementById('main-content').scrollTop=300;
+ const doc=dom.window.document;doc.getElementById('qa-name').value='Unsaved draft';doc.getElementById('qa-refs').value='https://example.com/draft';context.openTaskDetails('a');doc.getElementById('main-content').scrollTop=300;
  await context.refreshWorkspaceFromUI({silent:true});
- assert.equal(doc.getElementById('qa-name').value,'Unsaved draft');assert.ok(doc.querySelector('.task-brief').open);assert.equal(doc.getElementById('main-content').scrollTop,300);
+ assert.equal(doc.getElementById('qa-name').value,'Unsaved draft');assert.equal(doc.getElementById('qa-refs').value,'https://example.com/draft');assert.ok(doc.getElementById('task-details').open);assert.equal(doc.getElementById('detail-brief').value,'Full brief');assert.equal(doc.getElementById('main-content').scrollTop,300);
+ doc.querySelector('#task-details [data-detail-close]').click();
  run("showPage('settings')");doc.getElementById('new-password').value='Unsaved password';await context.refreshWorkspaceFromUI({silent:true});assert.equal(doc.getElementById('new-password').value,'Unsaved password');
  dom.window.close();
 });
@@ -115,14 +119,25 @@ test('quick add blocks double submits and reports a committed save accurately if
  const {dom,run,context}=app();
  run("renderTasksPage(); ensureSession=async()=>{};");
  dom.window.document.getElementById('qa-name').value='Only one task';
- let resolveSave;let requests=0;let message;
+ dom.window.document.getElementById('qa-refs').value='https://example.com/concept, https://example.com/copy';
+ let resolveSave;let requests=0;let message;let saved;
  context.waitForSave=new Promise(resolve=>{resolveSave=resolve;});
- context.recordRequest=()=>requests++;
+ context.recordRequest=(name,args)=>{requests++;saved={name,args};};
  context.recordMessage=m=>{message=m;};
- run("rpc=async()=>{recordRequest();await waitForSave;}; loadWorkspace=async()=>{throw Error('Offline')}; showToast=recordMessage;");
+ run("rpc=async(name,args)=>{recordRequest(name,args);await waitForSave;}; loadWorkspace=async()=>{throw Error('Offline')}; showToast=recordMessage;");
  const first=context.saveQuickTask();await context.saveQuickTask();assert.equal(requests,1);
  resolveSave();await first;
  assert.match(message,/Task saved/);assert.equal(dom.window.document.getElementById('qa-name').value,'');
+ assert.equal(saved.name,'save_task');assert.equal(saved.args.p_task.refs,'https://example.com/concept, https://example.com/copy');
+ assert.equal(dom.window.document.getElementById('qa-refs').value,'');
+ dom.window.close();
+});
+
+test('full task form places one labeled reference field immediately after the brief',()=>{
+ const {dom}=app();const doc=dom.window.document;
+ assert.equal(doc.querySelectorAll('#t-refs').length,1);
+ assert.equal(doc.getElementById('t-brief').closest('.form-group').nextElementSibling.querySelector('input').id,'t-refs');
+ assert.equal(doc.getElementById('t-refs').labels[0].textContent,'Reference Links (Optional)');
  dom.window.close();
 });
 

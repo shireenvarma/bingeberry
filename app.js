@@ -1287,21 +1287,11 @@ async function refreshWorkspaceFromUI({ silent = false } = {}) {
     // Capture after loading: the user may have navigated or edited while waiting.
     const draft = [...document.querySelectorAll('#main-task-body [id^="qa-"], #page-settings input, #focus-panel input, #focus-panel select')]
       .map((input) => [input.id, input.value]);
-    const expandedBriefs = [...document.querySelectorAll('.task-brief[open]')]
-      .map((details) => {
-        const row = details.closest('tr');
-        return [row.parentElement.id, row.dataset.taskId];
-      });
     const scrollTop = byId('main-content').scrollTop;
     renderAll();
     draft.forEach(([id, value]) => {
       const input = byId(id);
       if (input) input.value = value;
-    });
-    expandedBriefs.forEach(([bodyId, taskId]) => {
-      const body = byId(bodyId);
-      const details = body?.querySelector(`[data-task-id="${taskId}"] .task-brief`);
-      if (details) details.open = true;
     });
     byId('main-content').scrollTop = scrollTop;
     if (!silent) showToast('Workspace refreshed', 'success');
@@ -1461,7 +1451,7 @@ function quickAddTaskRow() {
   const defaultAssigneeId = CURRENT_USER?.role === 'team' || activeFilters.assigned === 'All' ? CURRENT_USER.id : activeFilters.assigned;
   return `<tr class="quick-add-row">
     <td><span class="quick-add-mark">+</span></td>
-    <td><input id="qa-name" class="form-control quick-add-input" placeholder="Task name" aria-label="Task name"><input id="qa-brief" class="form-control quick-add-input quick-add-brief" placeholder="Brief (optional)" aria-label="Task brief"></td>
+    <td><input id="qa-name" class="form-control quick-add-input" placeholder="Task name" aria-label="Task name"><input id="qa-brief" class="form-control quick-add-input quick-add-brief" placeholder="Brief (optional)" aria-label="Task brief"><input id="qa-refs" class="form-control quick-add-input quick-add-brief" placeholder="Reference links (optional)" aria-label="Task reference links" title="Paste https:// links separated by commas"></td>
     <td><select id="qa-client" class="form-control quick-add-input" aria-label="Brand">${quickAddOptions(clients, defaultClientId, 'No brand')}</select></td>
     <td><select id="qa-type" class="form-control quick-add-input" aria-label="Type">${typeOptions.map((type) => `<option value="${escapeTaskText(type)}"${type === (selectedClient?.type || 'Retainer') ? ' selected' : ''}>${escapeTaskText(type)}</option>`).join('')}</select></td>
     <td><select id="qa-assigned" class="form-control quick-add-input" aria-label="Assigned"${CURRENT_USER?.role === 'team' ? ' disabled' : ''}>${quickAddOptions(assignees, defaultAssigneeId)}</select></td>
@@ -2275,7 +2265,7 @@ async function saveQuickTask() {
     status,
     assigned: assignedId,
     assignedIds: assignedId ? [assignedId] : [],
-    refs: '',
+    refs: byId('qa-refs')?.value.trim() || '',
     remind: 'none',
     reminders: [],
     recurring: 'no',
@@ -2298,6 +2288,7 @@ async function saveQuickTask() {
     committed = true;
     byId('qa-name').value = '';
     byId('qa-brief').value = '';
+    byId('qa-refs').value = '';
     await loadWorkspace();
     quickTaskId = crypto.randomUUID();
     renderAll();

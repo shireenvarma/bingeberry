@@ -97,6 +97,7 @@ After migration and deployment, test with an admin, manager, approved team membe
 ## Workspace Features
 
 - Click a task title to open its detail panel without navigating away from the list. Full briefs and references remain readable; permitted users can explicitly save name, brief, due date, status, and priority changes. Other properties use the existing advanced edit form.
+- Reference links can be entered in Quick Add or directly below the brief in the full task form. Read-only properties in the detail panel appear as text, not disabled editing controls.
 - The panel is a separate native-dialog UI module with mobile styling, focus restoration, draft protection, and optimistic conflict detection. This UI update requires no additional SQL migration.
 
 ## Next Product Phase: Social Planner (Proposal)

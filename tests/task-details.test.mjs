@@ -50,9 +50,19 @@ test('failed save and background refresh preserve unsaved text',async()=>{
 test('readonly viewers cannot edit; assignees can change status without editing briefs',async()=>{
  const {dom,panel,dialog}=setup();panel.open({...context(),canEdit:false,canManage:false});
  assert.ok(dialog.querySelector('#detail-name').readOnly);assert.ok(dialog.querySelector('#detail-brief').readOnly);
- assert.ok(dialog.querySelector('#detail-status').disabled);assert.equal(dialog.querySelector('[type="submit"]'),null);
+ assert.equal(dialog.querySelectorAll('select,input').length,0);
+ assert.equal(dialog.querySelector('#detail-status').textContent,'To Do');
+ assert.equal(dialog.querySelector('#detail-priority').textContent,'Medium');
+ assert.equal(dialog.querySelector('#detail-due').textContent,'20 Nov 2026');
+ assert.equal(dialog.querySelector('[type="submit"]'),null);
  panel.open({...context(),canEdit:false,canManage:true});
  assert.ok(dialog.querySelector('#detail-brief').readOnly);assert.equal(dialog.querySelector('#detail-status').disabled,false);
+ assert.equal(dialog.querySelector('#detail-priority').tagName,'SELECT');
+ assert.equal(dialog.querySelector('#detail-due').tagName,'P');
+ input(dom,dialog.querySelector('#detail-status'),'progress');
+ await submit(dom,dialog);
+ assert.equal(dialog.querySelector('#detail-status').disabled,false);
+ assert.equal(dialog.querySelector('#detail-due').tagName,'P');
  dom.window.close();
 });
 

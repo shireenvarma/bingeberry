@@ -163,10 +163,6 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;}
 .task-table tr:hover td { background:rgba(255,255,255,0.015); }
 .task-table tr.is-done td { opacity:0.38; }
 .task-table tr.is-done .t-name { text-decoration:line-through; }
-.task-brief summary { cursor:pointer;overflow-wrap:anywhere; }
-.task-brief-hint { display:block;color:var(--lime);font-size:10px;font-weight:400;margin-top:4px; }
-.task-brief[open] .task-brief-hint { display:none; }
-.task-brief-body { white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;font-size:13px;color:var(--text);min-width:180px;max-width:560px;margin-top:12px;max-height:60vh;overflow-y:auto; }
 .task-select { display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);margin-bottom:8px;white-space:nowrap; }
 .task-selection-tools:not([hidden]) { display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;font-size:12px;color:var(--muted); }
 .t-name { font-weight:500;font-size:13px;max-width:240px; }
@@ -687,6 +683,11 @@ textarea.form-control { resize:vertical;min-height:70px; }
         <textarea class="form-control" id="t-brief" placeholder="What needs to be done? Goals, context..."></textarea>
       </div>
       <div class="form-group">
+        <label class="form-label" for="t-refs">Reference Links (Optional)</label>
+        <input class="form-control" id="t-refs" placeholder="https://drive.google.com/... , https://example.com/...">
+        <div class="form-hint">Paste reference or concept links here, separated by commas. They appear in the task detail panel.</div>
+      </div>
+      <div class="form-group">
         <label class="form-label">Brands</label>
         <div id="t-client-list" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
       </div>
@@ -748,11 +749,6 @@ textarea.form-control { resize:vertical;min-height:70px; }
             <option value="second_half">Second Half</option>
           </select>
         </div>
-      </div>
-      <div class="form-group">
-        <label class="form-label">References / Data Links</label>
-        <input class="form-control" id="t-refs" placeholder="https://drive.google.com/... or paste links">
-        <div class="form-hint">Separate multiple links with a comma</div>
       </div>
       <div class="form-group">
         <label class="form-label">Reminders</label>

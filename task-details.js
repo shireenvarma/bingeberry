@@ -49,9 +49,9 @@ export function createTaskDetails({ document, onSave, onAdvanced, confirmDiscard
         <label class="task-details-name-label" for="detail-name">Task name</label>
         <textarea id="detail-name" class="task-details-name" rows="2" required ${canEdit ? '' : 'readonly'}>${escape(task.name)}</textarea>
         <div class="task-details-properties">
-          <label>Status<select id="detail-status" class="form-control" ${canManage ? '' : 'disabled'}>${options(statusOptions,task.status)}</select></label>
-          <label>Priority<select id="detail-priority" class="form-control" ${canManage ? '' : 'disabled'}>${options([['High','High'],['Medium','Medium'],['Low','Low']],task.priority)}</select></label>
-          <label>Due date<input id="detail-due" type="date" class="form-control" value="${escape(task.due || '')}" required ${canEdit ? '' : 'readonly'}></label>
+          ${canManage ? `<label>Status<select id="detail-status" class="form-control">${options(statusOptions,task.status)}</select></label>` : `<div class="task-details-property"><span>Status</span><p id="detail-status">${escape(statusOptions.find(([value]) => value === task.status)?.[1] || task.status)}</p></div>`}
+          ${canManage ? `<label>Priority<select id="detail-priority" class="form-control">${options([['High','High'],['Medium','Medium'],['Low','Low']],task.priority)}</select></label>` : `<div class="task-details-property"><span>Priority</span><p id="detail-priority">${escape(task.priority)}</p></div>`}
+          ${canEdit ? `<label>Due date<input id="detail-due" type="date" class="form-control" value="${escape(task.due || '')}" required></label>` : `<div class="task-details-property"><span>Due date</span><p id="detail-due">${escape(task.due ? new Date(task.due+'T00:00:00').toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : 'Not set')}</p></div>`}
           <div class="task-details-property"><span>Brands</span><p>${escape(brands)}</p></div>
           <div class="task-details-property"><span>Owners</span><p>${escape(owners)}</p></div>
           <div class="task-details-property"><span>Last updated</span><p>${escape(updated)}</p></div>
