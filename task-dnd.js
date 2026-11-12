@@ -22,6 +22,17 @@ export function attachTaskDragAndDrop(container, config) {
   if (container.dataset.dragSortBound === 'true') return;
   container.dataset.dragSortBound = 'true';
 
+  container.addEventListener('keydown', async (event) => {
+    const handle = event.target.closest('[data-drag-handle]');
+    const currentConfig = container.__taskDndConfig;
+    if (!handle || !currentConfig?.enabled || !event.altKey || !['ArrowUp','ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const rows = [...container.querySelectorAll('[data-task-id]')].filter((row) => row.querySelector('[data-drag-handle]'));
+    const row = handle.closest('[data-task-id]');
+    const target = rows[rows.indexOf(row) + (event.key === 'ArrowDown' ? 1 : -1)];
+    if (target) await currentConfig.onMove(row.dataset.taskId,target.dataset.taskId,event.key === 'ArrowDown' ? 'after' : 'before',currentConfig.viewKey);
+  });
+
   container.addEventListener('dragstart', (event) => {
     const handle = event.target.closest('[data-drag-handle]');
     const currentConfig = container.__taskDndConfig;
@@ -51,7 +62,7 @@ export function attachTaskDragAndDrop(container, config) {
     if (!currentConfig?.enabled || !sourceId) return;
 
     const row = event.target.closest('[data-task-id]');
-    if (!row || row.dataset.taskId === sourceId) return;
+    if (!row || !row.querySelector('[data-drag-handle]') || row.dataset.taskId === sourceId) return;
 
     event.preventDefault();
     clearRowState(container);
@@ -70,7 +81,7 @@ export function attachTaskDragAndDrop(container, config) {
     if (!currentConfig?.enabled || !sourceId) return;
 
     const row = event.target.closest('[data-task-id]');
-    if (!row) return;
+    if (!row || !row.querySelector('[data-drag-handle]')) return;
     event.preventDefault();
 
     const targetId = row.dataset.taskId || '';

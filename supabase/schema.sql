@@ -1,3 +1,5 @@
+-- Base schema for new installations. Apply every file in migrations/ afterwards.
+-- For existing installations, apply new migrations rather than rerunning this file.
 create extension if not exists pgcrypto;
 
 create table if not exists public.profiles (

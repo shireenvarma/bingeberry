@@ -4,6 +4,11 @@
   "type": "module",
   "scripts": {
     "start": "node scripts/serve-local.mjs",
-    "dev": "node scripts/serve-local.mjs"
+    "dev": "node scripts/serve-local.mjs",
+    "test": "TZ=Asia/Kolkata node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
+    "jsdom": "26.1.0"
   }
 }

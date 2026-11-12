@@ -29,6 +29,7 @@
   --r-sm: 6px;
 }
 *{box-sizing:border-box;margin:0;padding:0;}
+[hidden]{display:none!important;}
 html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.5;}
 button,input,select,textarea{font-family:inherit;font-size:inherit;}
 ::-webkit-scrollbar{width:3px;height:3px;}
@@ -152,7 +153,8 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;}
 .sh-line { flex:1;height:1px;background:var(--border); }
 
 /* ─── TASK TABLE ──────────────────────────── */
-.task-wrap { background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:20px; }
+.task-wrap { background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow-x:auto;margin-bottom:20px; }
+.mobile-menu { display:none; }
 .task-table { width:100%;border-collapse:collapse; }
 .task-table th { padding:9px 14px;font-size:10px;font-family:'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;text-align:left;border-bottom:1px solid var(--border);font-weight:400;background:var(--s2);white-space:nowrap; }
 .task-table td { padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle; }
@@ -221,11 +223,15 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;}
 .status.readonly { cursor:default; }
 
 /* ─── FILTER BAR ──────────────────────────── */
-.filter-bar { display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:16px; }
-.f-chip { padding:5px 12px;border-radius:20px;font-size:12px;cursor:pointer;transition:all 0.12s;background:var(--s2);color:var(--muted);border:1px solid var(--border);font-family:'DM Sans',sans-serif; }
-.f-chip:hover { color:var(--text); }
-.f-chip.active { background:rgba(200,240,101,0.08);color:var(--lime);border-color:rgba(200,240,101,0.25); }
-.f-sep { width:1px;height:20px;background:var(--border);margin:0 4px; }
+.filter-bar { display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:20px; }
+.task-filter-field { display:flex;flex-direction:column;gap:6px;flex:1 1 150px;max-width:240px;min-width:0; }
+.task-filter-field > span { font:10px 'DM Mono',monospace;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em; }
+.task-filter-select { width:100%;min-width:0;cursor:pointer;text-overflow:ellipsis; }
+.task-filter-select.is-filtered { border-color:var(--lime);color:var(--lime); }
+.task-filter-select:focus-visible { outline:2px solid var(--lime);outline-offset:2px; }
+.task-filter-clear { min-height:38px; }
+.task-filter-clear:disabled { opacity:0.4;cursor:default; }
+.task-filter-count { margin-left:auto;padding-bottom:10px;font-size:12px;color:var(--muted);white-space:nowrap; }
 
 /* ─── MONTH CHECKLIST ─────────────────────── */
 .checklist-grid { display:grid;grid-template-columns:repeat(2,1fr);gap:16px;margin-bottom:24px; }
@@ -391,6 +397,13 @@ textarea.form-control { resize:vertical;min-height:70px; }
 }
 @media(max-width:640px){
   .sidebar{display:none;}
+  .sidebar.mobile-open{display:flex;position:fixed;left:0;top:76px;bottom:0;z-index:100;width:min(280px,85vw);box-shadow:12px 0 40px #0008;}
+  .mobile-menu{display:inline-flex;flex-shrink:0;}
+  .topbar-title,.topbar-divider,.topbar-month,.topbar-user .avatar,.topbar-user .role-badge{display:none;}
+  .topbar-user{margin-left:auto;min-width:0;}
+  #topbar-name{max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .auth-box{width:min(380px,100%);padding:24px;}
+  .task-table{min-width:1000px;}
   .page{padding:16px;}
   .week-grid{grid-template-columns:repeat(2,1fr);}
   .users-grid{grid-template-columns:1fr;}
@@ -422,6 +435,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
       <input class="field-input" id="auth-pass-confirm" type="password" placeholder="Confirm password" autocomplete="new-password">
     </div>
     <button class="btn-auth" id="auth-submit-btn" onclick="doLogin()">Sign In →</button>
+    <button class="btn btn-ghost" id="auth-retry-btn" type="button" hidden onclick="retryWorkspaceLoad()">Retry loading workspace</button>
     <button class="auth-link-btn" type="button" id="auth-forgot-btn" onclick="requestPasswordReset()">Forgot password?</button>
     <div class="auth-users">
       <div class="auth-user-hint" id="auth-helper-text">Use your work email and password. Sessions stay active across refreshes.</div>
@@ -452,6 +466,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
 <div id="app">
   <!-- Top bar -->
   <div class="app-topbar">
+    <button class="btn btn-ghost mobile-menu" type="button" aria-controls="sidebar" aria-expanded="false" onclick="toggleMobileMenu(this)">Menu</button>
     <span class="topbar-logo"><img class="topbar-logo-mark" src="./assets/bingeberry-logo.png" alt="BingeBerry logo"></span>
     <div class="topbar-divider"></div>
     <span class="topbar-title" id="topbar-title">Dashboard</span>
@@ -519,11 +534,11 @@ textarea.form-control { resize:vertical;min-height:70px; }
           <div class="team-updates-grid" id="team-updates-grid"></div>
         </div>
         <div class="sh"><h3>Overdue</h3><div class="sh-line"></div></div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Status</th></tr></thead><tbody id="dash-overdue"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead><tbody id="dash-overdue"></tbody></table></div>
         <div class="sh"><h3>Due This Week</h3><div class="sh-line"></div></div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Status</th></tr></thead><tbody id="dash-week"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead><tbody id="dash-week"></tbody></table></div>
         <div class="sh"><h3>All Active</h3><div class="sh-line"></div></div>
-        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Status</th></tr></thead><tbody id="dash-all"></tbody></table></div>
+        <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th>Actions</th></tr></thead><tbody id="dash-all"></tbody></table></div>
       </div>
 
       <!-- ── TASKS ── -->
@@ -615,29 +630,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
       <div class="page" id="page-settings">
         <div class="page-header"><h2>Settings</h2></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-          <div class="card">
-            <div style="font-size:13px;font-weight:600;margin-bottom:14px;">📧 EmailJS Reminder Config</div>
-            <div class="form-group">
-              <label class="form-label">EmailJS Service ID</label>
-              <input class="form-control" id="ejs-service" placeholder="service_xxxxxxx">
-            </div>
-            <div class="form-group">
-              <label class="form-label">EmailJS Template ID</label>
-              <input class="form-control" id="ejs-template" placeholder="template_xxxxxxx">
-            </div>
-            <div class="form-group">
-              <label class="form-label">EmailJS Public Key</label>
-              <input class="form-control" id="ejs-pubkey" placeholder="xxxxxxxxxxxx">
-            </div>
-            <button class="btn btn-primary" style="margin-top:4px" onclick="saveEmailJS()">Save EmailJS Config</button>
-            <div style="margin-top:12px;font-size:12px;color:var(--muted);line-height:1.7;">
-              <strong style="color:var(--amber)">Setup guide:</strong><br>
-              1. Go to <a href="https://emailjs.com" target="_blank" style="color:var(--blue)">emailjs.com</a> → free account<br>
-              2. Connect your Gmail under Email Services<br>
-              3. Create a template with variables: <code style="font-family:'DM Mono',monospace;background:var(--s3);padding:1px 5px;border-radius:3px;">{{to_name}}</code> <code style="font-family:'DM Mono',monospace;background:var(--s3);padding:1px 5px;border-radius:3px;">{{task_name}}</code> <code style="font-family:'DM Mono',monospace;background:var(--s3);padding:1px 5px;border-radius:3px;">{{due_date}}</code> <code style="font-family:'DM Mono',monospace;background:var(--s3);padding:1px 5px;border-radius:3px;">{{client}}</code><br>
-              4. Copy the Service ID, Template ID and Public Key here
-            </div>
-          </div>
+          <div class="card"><div style="font-size:13px;font-weight:600;margin-bottom:14px">Email Reminders</div><p style="color:var(--muted);font-size:13px;line-height:1.7">Set reminder dates and times on a task. Reminders use the agency timezone (India) and run even when the dashboard is closed.</p><p style="color:var(--muted);font-size:13px;margin-top:12px">An administrator must configure the delivery service before reminders can be emailed.</p></div>
           <div class="card">
             <div style="font-size:13px;font-weight:600;margin-bottom:14px;">🔐 Account Security</div>
             <div style="display:grid;gap:10px;">
@@ -901,7 +894,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">Email *</label>
-          <input class="form-control" id="u-email" placeholder="team@email.com" type="email">
+          <input class="form-control" id="u-email" placeholder="team@email.com" type="email" readonly title="Email changes require the account owner's verified authentication flow.">
         </div>
         <div class="form-group">
           <label class="form-label">Role</label>
@@ -925,6 +918,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
         <div class="form-group">
           <label class="form-label">Notifications</label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="u-email-reminders" class="ck" checked> Email reminders enabled</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="u-approved" class="ck"> Approved workspace access</label>
         </div>
       </div>
       <div class="form-group">
