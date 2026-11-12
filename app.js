@@ -3,6 +3,7 @@ import { BINGEBERRY_CONFIG } from './supabase/config.js';
 import { attachTaskDragAndDrop } from './task-dnd.js';
 import { taskBriefContent, escapeTaskText } from './task-content.js';
 import { renderTaskFilters } from './task-filters.js';
+import { createTaskDetails } from './task-details.js';
 import { localDate, safeUrl, safeColor, inlineValue, fetchAll, restoreTimer } from './app-utils.js';
 
 const CONFIG = BINGEBERRY_CONFIG || {};
@@ -116,6 +117,47 @@ let newTaskId = crypto.randomUUID();
 let quickTaskId = crypto.randomUUID();
 let newClientId = crypto.randomUUID();
 let authEpoch = 0;
+let taskDetails = null;
+
+function taskDetailContext(task) {
+  if (!task) return null;
+  return {
+    task, brands: getTaskClientNames(task), owners: getTaskAssigneeNames(task),
+    canEdit: canEditTaskDetails(task) && canManageTask(task), canManage: canManageTask(task),
+    updated: fmtDateTime(task.updatedAt),
+  };
+}
+
+function openTaskDetails(id, source) {
+  if (!CURRENT_USER) return;
+  const task = visibleTasks().find((item) => item.id === id);
+  if (!task) { showToast('This task is no longer available. Refresh the workspace.', 'error'); return; }
+  if (!taskDetails) taskDetails = createTaskDetails({
+    document,
+    confirmDiscard: () => confirm('Discard your unsaved task changes?'),
+    onAdvanced: editTask,
+    onSave: async (snapshot, patch) => {
+      try {
+        if (!CURRENT_USER || !canManageTask(snapshot)) throw new Error('You no longer have permission to edit this task.');
+        const actorId = CURRENT_USER.id;
+        const session = await ensureSession();
+        if (session.user.id !== actorId || CURRENT_USER?.id !== actorId) throw new Error('Your account changed. Reopen the task before saving.');
+        const { data,error } = await supabase.from('tasks').update({ ...patch,updated_by:actorId })
+          .eq('id',snapshot.id).eq('updated_at',snapshot.updatedAt).select('*');
+        if (error) throw error;
+        if (!data?.length) throw new Error('This task changed or was removed. Your draft is preserved. Copy it, then reopen the task to load the latest version.');
+        if (CURRENT_USER?.id !== actorId) return { error: 'Your account changed. Reopen the task to see the saved changes.' };
+        const updated = mapTaskFromRow(data[0]);
+        DB.tasks = DB.tasks.map((item) => item.id === updated.id ? updated : item);
+        const scrollTop = byId('main-content').scrollTop;
+        renderAll();
+        byId('main-content').scrollTop = scrollTop;
+        return taskDetailContext(updated);
+      } catch (error) { return { error: error.message || 'Unable to save task changes.' }; }
+    },
+  });
+  taskDetails.open(taskDetailContext(task),source);
+}
 
 async function rpc(name, args = {}) {
   const { data, error } = await supabase.rpc(name, args);
@@ -937,6 +979,7 @@ function showApp() {
 }
 
 function showAuthScreen() {
+  taskDetails?.close(true);
   authEpoch++;
   if (timerOwnerId) {
     persistFocusTimer();
@@ -1937,6 +1980,7 @@ function renderTeamUpdates() {
 }
 
 function renderAll() {
+  if (taskDetails?.taskId) taskDetails.reconcile(taskDetailContext(DB.tasks.find((task) => task.id === taskDetails.taskId)));
   updateBadges();
   renderFilterBar();
   if (currentPage === 'dashboard') renderDashboard();
@@ -3085,6 +3129,12 @@ function initApp() {
 }
 
 function bindBaseEvents() {
+  document.addEventListener('click',(event) => {
+    const button = event.target.closest('[data-open-task]');
+    if (!button) return;
+    event.preventDefault();
+    openTaskDetails(button.dataset.openTask,button);
+  });
   byId('auth-user').addEventListener('keydown', (event) => {
     if (event.key === 'Enter') byId('auth-pass').focus();
   });

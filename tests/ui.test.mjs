@@ -7,6 +7,7 @@ import * as utils from '../app-utils.js';
 import { taskBriefContent, escapeTaskText } from '../task-content.js';
 import { renderTaskFilters } from '../task-filters.js';
 import { attachTaskDragAndDrop } from '../task-dnd.js';
+import { createTaskDetails } from '../task-details.js';
 import { resolveRequestPath } from '../scripts/serve-local.mjs';
 
 const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
@@ -15,7 +16,7 @@ function app(authClient = null) {
  const dom=new JSDOM(html,{url:'https://example.com/bingeberry/'});
  const context={...utils,window:dom.window,document:dom.window.document,localStorage:dom.window.localStorage,
   BINGEBERRY_CONFIG:authClient ? {supabaseUrl:'https://example.supabase.co',supabaseAnonKey:'test'} : {},createClient:()=>authClient,
-  taskBriefContent,escapeTaskText,renderTaskFilters,attachTaskDragAndDrop,
+  taskBriefContent,escapeTaskText,renderTaskFilters,attachTaskDragAndDrop,createTaskDetails,
   crypto:globalThis.crypto,URL:globalThis.URL,URLSearchParams,Blob,console:{...console,error:()=>{}},structuredClone,
   setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,clearInterval:()=>{},confirm:()=>true};
  vm.createContext(context);vm.runInContext(source,context);
@@ -149,5 +150,20 @@ test('same-user auth events preserve navigation and recovery events preserve typ
  dom.window.document.getElementById('auth-pass').value='A new password';
  handler('TOKEN_REFRESHED',{user:{id:'user'}});
  assert.equal(dom.window.document.getElementById('auth-pass').value,'A new password');
+ dom.window.close();
+});
+
+test('task title opens a detail panel without changing list filters or scroll',()=>{
+ const {dom,run,context}=app();
+ run(`DB.tasks=[{id:'a',name:'Open this task',brief:'Read the full brief',clientIds:['brand'],assignedIds:['user'],type:'Personal',status:'todo',priority:'Medium',due:todayStr,sortOrder:1}];
+ bindBaseEvents(); showPage('tasks'); setFilter('client','brand');`);
+ const doc=dom.window.document;doc.getElementById('main-content').scrollTop=200;
+ doc.querySelector('[data-open-task="a"]').click();
+ assert.ok(doc.getElementById('task-details').open);
+ assert.equal(doc.getElementById('detail-brief').value,'Read the full brief');
+ assert.equal(run('currentPage'),'tasks');assert.equal(run('activeFilters.client'),'brand');
+ assert.equal(doc.getElementById('main-content').scrollTop,200);
+ doc.querySelector('#task-details [data-detail-close]').click();
+ assert.equal(doc.getElementById('task-details').open,false);
  dom.window.close();
 });

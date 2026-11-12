@@ -42,6 +42,9 @@ New teammates must use **Create an account**, then confirm their email. An admin
 These are standing project instructions for every future feature and fix; the user
 does not need to repeat or explicitly invoke them.
 
+After changes, stage required new files in Git and remove confirmed disposable
+untracked artifacts. Keep ignored local dependencies and preserve unrelated user files.
+
 Act as the product architect for an agency task platform. Translate requested
 functionality into a complete, scalable workflow and make routine design decisions
 without waiting for pixel-level instructions. Preserve BingeBerry's visual identity.
@@ -92,6 +95,24 @@ Delivery uses leases, bounded retries, and provider idempotency keys. The queue 
 After migration and deployment, test with an admin, manager, approved team member, and newly verified account. Verify approval, financial access, task creation from both forms, conflict handling in two tabs, filter combinations, a 500-word brief, drag and keyboard ordering, bulk deletion, and mobile navigation. Confirm tab switching preserves drafts and navigation, reset links show the password form, and a running timer survives reload. Automated tests use an isolated PostgreSQL engine and a DOM runtime; they do not modify the live database or send email.
 
 ## Workspace Features
+
+- Click a task title to open its detail panel without navigating away from the list. Full briefs and references remain readable; permitted users can explicitly save name, brief, due date, status, and priority changes. Other properties use the existing advanced edit form.
+- The panel is a separate native-dialog UI module with mobile styling, focus restoration, draft protection, and optimistic conflict detection. This UI update requires no additional SQL migration.
+
+## Next Product Phase: Social Planner (Proposal)
+
+The next feature to design is an agency social-content calendar, before task comments,
+attachments, or richer editors. This section records direction, not implemented functionality.
+
+- Use month/week calendar views plus an unscheduled-ideas list; filter by brand, channel, owner, and review status. Clicking a card opens a content detail panel.
+- A content item should have an idea/title, brief, copy, references, concept images, intended publish time and timezone, and a review state. Internal tasks can link to content items, but content must be stored separately: the task cleanup policy must never delete approved posts, client feedback, or approval history.
+- Provide a client review view through a revocable, scoped share link. It must expose only selected content for that client, never employee task APIs or the whole agency workspace. Decide whether comments require email verification before implementation.
+- Separate internal notes from client-visible feedback. Model approvals against a content revision so later copy/image edits invalidate approval rather than silently publishing changed work.
+- Future publishing should be a separate server-side integration and job queue, with per-brand social accounts, protected credentials, retries, and provider capability checks. Calendar dates and client approval must not themselves trigger publication.
+
+Reference patterns: [Notion calendar database views](https://www.notion.com/help/calendars)
+and [Notion sharing and permissions](https://www.notion.com/help/sharing-and-permissions).
+Future Instagram integration should use [Meta's official Instagram API documentation](https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api).
 
 - `resetData()` clears workspace data but keeps user accounts.
 - Team members can add tasks for themselves and update progress on their own tasks.
