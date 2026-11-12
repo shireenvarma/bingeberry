@@ -91,7 +91,7 @@ test('migrations, access boundaries and transactional task operations', async ()
  assert.deepEqual((await db.query("select value from workspace_documents where key='recurring_templates'")).rows[0].value,[]);
  await assert.rejects(asUser(admin,`update profiles set approved=false where id='${admin}'`),/at least one approved administrator/);
  await assert.rejects(asUser(team,'select reset_workspace()'),/Only admins/);
- // The existing hourly cleanup target must retain completed work and archive once.
+ // Verify the historical archive migration before testing the retention correction.
  await asUser(team,`update tasks set status='done' where id='${taskId}'`);
  await db.exec(`alter table tasks disable trigger tasks_set_completed_at;
  update tasks set completed_at=now()-interval '25 hours' where id='${taskId}';
@@ -110,5 +110,33 @@ test('migrations, access boundaries and transactional task operations', async ()
  assert.equal((await db.query('select purge_expired_completed_tasks() n')).rows[0].n,0);
  const newUser='10000000-0000-0000-0000-000000000004';
  assert.equal((await asUser(newUser,`update tasks set status='todo' where id='${taskId}' returning id`)).rows.length,0);
+ const retention=await readFile(new URL('../supabase/migrations/20261113_task_retention.sql',import.meta.url),'utf8');
+ await db.exec(retention);
+ await db.exec(retention);
+ const recentId='30000000-0000-0000-0000-000000000010';
+ const activeId='30000000-0000-0000-0000-000000000011';
+ await db.exec(`insert into tasks(id,name,due_date,status,assigned_user_id,assigned_user_ids) values
+ ('${recentId}','Recently completed',current_date,'done','${team}',array['${team}']::uuid[]),
+ ('${activeId}','Still open',current_date,'todo','${admin}',array['${admin}']::uuid[]);
+ alter table tasks disable trigger tasks_set_completed_at;
+ update tasks set completed_at=now()-interval '25 hours',archived_at=now()-interval '1 hour' where id='${taskId}';
+ update tasks set completed_at=now()-interval '25 hours' where id='${activeId}';
+ alter table tasks enable trigger tasks_set_completed_at;`);
+ await assert.rejects(asUser(team,'select purge_expired_completed_tasks()'),/permission denied/i);
+ assert.equal((await db.query('select purge_expired_completed_tasks() n')).rows[0].n,1);
+ assert.equal((await db.query(`select id from tasks where id='${taskId}'`)).rows.length,0);
+ assert.equal((await db.query('select purge_expired_completed_tasks() n')).rows[0].n,0);
+ assert.equal((await db.query(`select id from tasks where id in ('${recentId}','${activeId}')`)).rows.length,2);
+ assert.equal((await db.query(`select count(*)::int n from cron.job where jobname='purge_expired_completed_tasks_hourly'`)).rows[0].n,1);
+ // Reopening cancels expiry, and completing again starts a fresh 24-hour window.
+ await db.exec(`alter table tasks disable trigger tasks_set_completed_at;
+ update tasks set completed_at=now()-interval '25 hours' where id='${recentId}';
+ alter table tasks enable trigger tasks_set_completed_at;`);
+ await asUser(team,`update tasks set status='progress' where id='${recentId}'`);
+ assert.equal((await db.query(`select completed_at from tasks where id='${recentId}'`)).rows[0].completed_at,null);
+ assert.equal((await db.query('select purge_expired_completed_tasks() n')).rows[0].n,0);
+ await asUser(team,`update tasks set status='done' where id='${recentId}'`);
+ assert.equal((await db.query('select purge_expired_completed_tasks() n')).rows[0].n,0);
+ assert.equal((await asUser(team,`update tasks set status='done' where id='${activeId}' returning id`)).rows.length,0);
  } finally { await db.close(); }
 });

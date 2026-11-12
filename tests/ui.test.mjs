@@ -200,7 +200,6 @@ test('Table and Board share filters and details while preserving drafts, view an
  run('loadWorkspace=async()=>{}');await context.refreshWorkspaceFromUI({silent:true});
  assert.equal(context.getTaskLayout(),'board');assert.equal(run('activeFilters.client'),'brand');assert.equal(run('currentPage'),'tasks');
  context.setTaskLayout('table');assert.equal(doc.getElementById('qa-name').value,'Unsaved task');
- context.setTaskHistory('archived');context.setTaskHistory('active');assert.equal(doc.getElementById('qa-name').value,'Unsaved task');
  assert.equal(doc.getElementById('task-view-table').getAttribute('aria-pressed'),'true');
  assert.equal(doc.getElementById('task-board').hidden,true);
  dom.window.close();
@@ -219,17 +218,30 @@ test('team members cannot use Quick Add but can open normal Add Task',async()=>{
  dom.window.close();
 });
 
-test('archived work is excluded from current views but can be filtered and opened in history',()=>{
+test('legacy archived tasks stay visible until the server deletes them and the archive selector is removed',()=>{
  const {dom,run,context}=app();
  run(`DB.tasks=[{id:'a',name:'Retained work',brief:'Old brief',refs:'https://pin.it/concept',clientIds:['brand'],assignedIds:['user'],type:'Personal',status:'done',priority:'Medium',due:todayStr,sortOrder:1,archivedAt:'2026-11-12T10:00:00Z'}];showPage('tasks');`);
- assert.equal(context.visibleTasks().length,0);assert.equal(context.getTasksPageTasks().length,0);
- context.setTaskHistory('archived');
- assert.equal(context.getTasksPageTasks().length,1);assert.equal(dom.window.document.getElementById('qa-name'),null);
+ assert.equal(context.visibleTasks().length,1);assert.equal(context.getTasksPageTasks().length,1);
+ assert.equal(dom.window.document.getElementById('task-history'),null);
+ assert.match(dom.window.document.getElementById('task-view-note').textContent,/permanently deleted after 24 hours/);
  context.setFilter('assigned','user');context.setTaskLayout('board');
  assert.equal(dom.window.document.querySelectorAll('#task-board .board-card').length,1);
  context.openTaskDetails('a');
  assert.equal(dom.window.document.getElementById('detail-brief').value,'Old brief');
  assert.equal(dom.window.document.querySelector('#task-details a').href,'https://pin.it/concept');
+ dom.window.close();
+});
+
+test('Board move controls follow admin, brand-manager and assignee permissions',()=>{
+ const {dom,run}=app();
+ run(`DB.tasks=[{id:'a',name:'Campaign',clientIds:['brand'],assignedIds:['assignee'],type:'Personal',status:'todo',priority:'Medium',due:todayStr,sortOrder:1}];showPage('tasks');setTaskLayout('board');`);
+ for (const [role,id,clients,allowed] of [
+  ['admin','user',[],true],['manager','user',['brand'],true],['manager','user',[],false],
+  ['team','assignee',[],true],['team','user',[],false],
+ ]) {
+  run(`CURRENT_USER={...CURRENT_USER,role:${JSON.stringify(role)},id:${JSON.stringify(id)},clients:${JSON.stringify(clients)}};setTaskLayout('board')`);
+  assert.equal(Boolean(dom.window.document.querySelector('#task-board .board-move')),allowed,`${role}:${id}:${clients}`);
+ }
  dom.window.close();
 });
 

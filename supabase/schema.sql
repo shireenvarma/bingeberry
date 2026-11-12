@@ -369,17 +369,17 @@ security definer
 set search_path = public
 as $$
 declare
-  archived_count integer;
+  deleted_count integer;
 begin
-  with archived as (
-    update public.tasks set archived_at = now()
-    where status = 'done' and archived_at is null
+  with deleted as (
+    delete from public.tasks
+    where status = 'done'
       and completed_at <= now() - interval '24 hours'
     returning 1
   )
-  select count(*) into archived_count from archived;
+  select count(*) into deleted_count from deleted;
 
-  return archived_count;
+  return deleted_count;
 end;
 $$;
 
