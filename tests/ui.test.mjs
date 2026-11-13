@@ -9,6 +9,7 @@ import { renderTaskFilters } from '../task-filters.js';
 import { attachTaskDragAndDrop } from '../task-dnd.js';
 import { createTaskDetails } from '../task-details.js';
 import { renderTaskBoard, BOARD_STATUSES } from '../task-board.js';
+import { createMobileNavigation } from '../mobile-navigation.js';
 import { resolveRequestPath } from '../scripts/serve-local.mjs';
 
 const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
@@ -17,7 +18,7 @@ function app(authClient = null) {
  const dom=new JSDOM(html,{url:'https://example.com/bingeberry/'});
  const context={...utils,window:dom.window,document:dom.window.document,localStorage:dom.window.localStorage,
   BINGEBERRY_CONFIG:authClient ? {supabaseUrl:'https://example.supabase.co',supabaseAnonKey:'test'} : {},createClient:()=>authClient,
-  taskBriefContent,escapeTaskText,renderTaskFilters,attachTaskDragAndDrop,createTaskDetails,renderTaskBoard,BOARD_STATUSES,
+  taskBriefContent,escapeTaskText,renderTaskFilters,attachTaskDragAndDrop,createTaskDetails,renderTaskBoard,BOARD_STATUSES,createMobileNavigation,
   crypto:globalThis.crypto,URL:globalThis.URL,URLSearchParams,Blob,console:{...console,error:()=>{}},structuredClone,
   setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,clearInterval:()=>{},confirm:()=>true};
  vm.createContext(context);vm.runInContext(source,context);
@@ -86,9 +87,45 @@ test('background refresh preserves quick-add and settings drafts, scroll and the
 
 test('mobile menu is keyboard-operable and closes on navigation; tables align',()=>{
  const {dom,run,context}=app();const doc=dom.window.document;const button=doc.querySelector('.mobile-menu');
+ dom.window.innerWidth=390;
  context.toggleMobileMenu(button);assert.equal(button.getAttribute('aria-expanded'),'true');
  run("showPage('tasks')");assert.equal(button.getAttribute('aria-expanded'),'false');
  for(const id of ['dash-all','dash-week','dash-overdue'])assert.equal(doc.getElementById(id).closest('table').querySelectorAll('thead th').length,9);
+ dom.window.close();
+});
+
+test('task tables expose mobile labels while preserving the same actions and permissions',()=>{
+ const {dom,run}=app();
+ run(`DB.tasks=[{id:'a',name:'Campaign',clientIds:['brand'],assignedIds:['user'],type:'Personal',status:'todo',priority:'High',due:todayStr,sortOrder:1}];showPage('tasks');`);
+ const doc=dom.window.document;const row=doc.querySelector('#main-task-body [data-task-id="a"]');
+ assert.equal(row.querySelector('.task-title-cell [data-open-task]').textContent,'Campaign');
+ assert.equal(row.querySelector('.task-owner-cell').dataset.label,'Assigned');
+ assert.equal(row.querySelector('.task-status-cell').dataset.label,'Status');
+ assert.equal(row.querySelectorAll('td').length,9);
+ assert.ok(row.querySelector('.task-action-cell [onclick^="editTask"]'));
+ assert.equal(doc.getElementById('mobile-quick-add').hidden,false);
+ run('toggleMobileQuickAdd()');assert.equal(doc.getElementById('mobile-quick-add').getAttribute('aria-expanded'),'true');
+ run("CURRENT_USER.role='team';renderTasksPage()");
+ assert.equal(doc.getElementById('mobile-quick-add').hidden,true);
+ assert.equal(doc.getElementById('qa-name'),null);
+ dom.window.close();
+});
+
+test('mobile stylesheet is explicitly limited to phone widths',()=>{
+ const {dom}=app();
+ assert.equal(dom.window.document.querySelector('link[href="./mobile.css"]').media,'(max-width: 640px)');
+ assert.match(dom.window.document.querySelector('meta[name="viewport"]').content,/viewport-fit=cover/);
+ dom.window.close();
+});
+
+test('mobile filter disclosure preserves selections and reports active filters',()=>{
+ const {dom,run,context}=app();const doc=dom.window.document;
+ run("showPage('tasks');toggleMobileFilters();setFilter('assigned','user')");
+ assert.equal(doc.getElementById('mobile-filter-toggle').getAttribute('aria-expanded'),'true');
+ assert.equal(doc.getElementById('mobile-filter-toggle').textContent,'Filters (1 active)');
+ context.toggleMobileFilters();
+ assert.equal(doc.getElementById('page-tasks').classList.contains('mobile-filters-open'),false);
+ assert.equal(run('activeFilters.assigned'),'user');
  dom.window.close();
 });
 

@@ -5,10 +5,12 @@
   "scripts": {
     "start": "node scripts/serve-local.mjs",
     "dev": "node scripts/serve-local.mjs",
-    "test": "TZ=Asia/Kolkata node --test tests/*.test.mjs"
+    "test": "TZ=Asia/Kolkata node --test tests/*.test.mjs",
+    "test:mobile": "node tests/browser/mobile-layout.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.3.14",
-    "jsdom": "26.1.0"
+    "jsdom": "26.1.0",
+    "playwright": "1.62.1"
   }
 }

@@ -5,6 +5,7 @@ import { taskBriefContent, escapeTaskText } from './task-content.js';
 import { renderTaskFilters } from './task-filters.js';
 import { createTaskDetails } from './task-details.js';
 import { renderTaskBoard, BOARD_STATUSES } from './task-board.js';
+import { createMobileNavigation } from './mobile-navigation.js';
 import { localDate, safeUrl, safeColor, inlineValue, fetchAll, restoreTimer } from './app-utils.js';
 
 const CONFIG = BINGEBERRY_CONFIG || {};
@@ -122,6 +123,7 @@ let quickTaskId = crypto.randomUUID();
 let newClientId = crypto.randomUUID();
 let authEpoch = 0;
 let taskDetails = null;
+let mobileNavigation = null;
 
 function taskDetailContext(task) {
   if (!task) return null;
@@ -976,6 +978,7 @@ function showApp() {
 }
 
 function showAuthScreen() {
+  mobileNavigation?.close(false);
   taskDetails?.close(true);
   selectedTaskIds.clear();
   authEpoch++;
@@ -1332,6 +1335,7 @@ const PAGE_TITLES = {
 };
 
 function showPage(page) {
+  mobileNavigation?.close();
   document.querySelector('.sidebar')?.classList.remove('mobile-open');
   document.querySelector('.mobile-menu')?.setAttribute('aria-expanded','false');
   document.querySelectorAll('.page').forEach((el) => el.classList.remove('active'));
@@ -1351,9 +1355,9 @@ function showPage(page) {
   renderAll();
 }
 
-function toggleMobileMenu(button) {
-  const open = document.querySelector('.sidebar').classList.toggle('mobile-open');
-  button.setAttribute('aria-expanded', String(open));
+function toggleMobileMenu() {
+  mobileNavigation ||= createMobileNavigation(document);
+  mobileNavigation.toggle();
 }
 
 function buildNavClientList() {
@@ -1391,6 +1395,10 @@ function setFilter(key, val) {
 function renderFilterBar() {
   const bar = byId('filter-bar');
   if (!bar) return;
+  const activeCount = Object.values(activeFilters).filter((value) => value !== 'All').length;
+  byId('mobile-filter-toggle').textContent = activeCount ? `Filters (${activeCount} active)` : 'Filters';
+  const count = getTasksPageTasks().length;
+  byId('mobile-task-count').textContent = `${count} task${count === 1 ? '' : 's'}`;
   const alphabetical = (items) => [...items].sort((a, b) => a.name.localeCompare(b.name));
   renderTaskFilters(bar, {
     filters: activeFilters,
@@ -1579,6 +1587,21 @@ function fillTable(bodyId, tasks, cols = 'full', options = {}) {
   const quickAdd = options.quickAdd ? quickAddTaskRow() : '';
   const rows = tasks.length ? tasks.map((task) => taskRow(task, cols, true, options)).join('') : `<tr class="empty-row"><td colspan="${colspan}">No tasks here</td></tr>`;
   body.innerHTML = quickAdd + rows;
+  const table = body.closest('table');
+  table.setAttribute('role', 'table');
+  const labels = [...table.querySelectorAll('thead th')].map((heading) => heading.textContent.trim());
+  const classes = cols === 'team'
+    ? ['task-check-cell','task-title-cell','','','','task-status-cell','task-action-cell']
+    : ['task-check-cell','task-title-cell','','','task-owner-cell','','','task-status-cell','task-action-cell'];
+  [...body.rows].forEach((row) => {
+    row.setAttribute('role', 'row');
+    [...row.cells].forEach((cell, index) => {
+      cell.setAttribute('role', 'cell');
+      if (row.classList.contains('empty-row')) return;
+      if (labels[index]) cell.dataset.label = labels[index];
+      if (!row.classList.contains('quick-add-row') && classes[index]) cell.classList.add(classes[index]);
+    });
+  });
 }
 
 function updateBadges() {
@@ -1659,6 +1682,8 @@ function renderTasksPage() {
   const board = getTaskLayout() === 'board';
   byId('task-table-view').hidden = board;
   byId('task-board').hidden = !board;
+  byId('mobile-board-hint').hidden = !board;
+  byId('mobile-quick-add').hidden = !canQuickAddTask();
   byId('task-view-table').setAttribute('aria-pressed', String(!board));
   byId('task-view-board').setAttribute('aria-pressed', String(board));
   byId('task-view-note').textContent = 'Completed tasks are permanently deleted after 24 hours by the hourly cleanup job.' + (board ? ' Drag between columns, or use Move to. Card order follows Organize by; priority is not changed by dragging.' : '');
@@ -1669,6 +1694,20 @@ function renderTasksPage() {
     isOverdue: (task) => task.status !== 'done' && daysFrom(task.due) < 0,
     onMove: moveBoardTask,
   });
+}
+
+function toggleMobileQuickAdd() {
+  if (!canQuickAddTask()) return;
+  const open = byId('task-table-view').classList.toggle('mobile-quick-add-open');
+  byId('mobile-quick-add').setAttribute('aria-expanded', String(open));
+  byId('mobile-quick-add').textContent = open ? 'Close Quick Add' : 'Quick Add';
+  if (open) byId('qa-name')?.focus();
+}
+
+function toggleMobileFilters() {
+  const open = byId('page-tasks').classList.toggle('mobile-filters-open');
+  byId('mobile-filter-toggle').setAttribute('aria-expanded', String(open));
+  if (open) byId('filter-bar').querySelector('select')?.focus();
 }
 
 async function moveBoardTask(id, status) {
@@ -2116,6 +2155,7 @@ function populateTaskModal(selectedClientId = '') {
 }
 
 function openModal(id) {
+  mobileNavigation?.close(false);
   byId(id).classList.add('open');
 }
 
@@ -2974,6 +3014,7 @@ function renderFloatingFocusTimer() {
 
   const prefs = getFocusPrefs();
   const active = focusTimerState.running && prefs.runningView === 'floating' && currentPage !== 'focus';
+  document.body.classList.toggle('mobile-floating-focus', active);
   if (!active) {
     floating.style.display = 'none';
     floating.innerHTML = '';
@@ -3171,6 +3212,7 @@ function initApp() {
 }
 
 function bindBaseEvents() {
+  mobileNavigation ||= createMobileNavigation(document);
   document.addEventListener('click',(event) => {
     const button = event.target.closest('[data-open-task]');
     if (!button) return;
@@ -3274,6 +3316,8 @@ Object.assign(window, {
   requestPasswordReset,
   retryWorkspaceLoad,
   toggleMobileMenu,
+  toggleMobileQuickAdd,
+  toggleMobileFilters,
   doLogout,
   toggleAuthMode: () => setAuthMode(authMode === 'signin' ? 'signup' : 'signin'),
   closeSignupConfirmation,

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>BingeBerry</title>
 <link rel="stylesheet" href="./task-details.css">
 <link rel="stylesheet" href="./task-board.css">
@@ -407,6 +407,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
   .users-grid{grid-template-columns:1fr;}
 }
 </style>
+<link rel="stylesheet" href="./mobile.css" media="(max-width: 640px)">
 </head>
 <body>
 
@@ -483,7 +484,8 @@ textarea.form-control { resize:vertical;min-height:70px; }
 
   <div class="app-body">
     <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar" aria-label="Workspace navigation">
+      <div class="mobile-nav-header" style="display:none"><span>Workspace</span><button type="button" class="btn btn-ghost btn-icon" data-mobile-nav-close aria-label="Close navigation">&times;</button></div>
       <div class="nav-section">
         <button class="nav-section-label clickable" onclick="showPage('dashboard')">Overview</button>
         <button class="nav-item active" onclick="showPage('dashboard')"><span class="nav-dot" style="background:var(--lime)"></span>Dashboard</button>
@@ -515,6 +517,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
         <button class="nav-item" onclick="showPage('settings')"><span class="nav-dot" style="background:var(--muted)"></span>Settings</button>
       </div>
     </aside>
+    <button type="button" id="mobile-nav-backdrop" style="display:none" hidden aria-hidden="true" tabindex="-1"></button>
 
     <!-- Main -->
     <main class="main-content" id="main-content">
@@ -545,6 +548,7 @@ textarea.form-control { resize:vertical;min-height:70px; }
           <h2 id="tasks-page-title">All Tasks</h2>
           <button class="btn btn-primary" onclick="openTaskModal()">+ Add Task</button>
         </div>
+        <div class="mobile-task-summary" style="display:none"><button type="button" id="mobile-filter-toggle" class="btn btn-ghost" aria-expanded="false" aria-controls="filter-bar" onclick="toggleMobileFilters()">Filters</button><span id="mobile-task-count"></span></div>
         <div class="filter-bar" id="filter-bar"></div>
         <div class="task-view-toolbar">
           <div class="task-view-switch" role="group" aria-label="Task view">
@@ -555,9 +559,11 @@ textarea.form-control { resize:vertical;min-height:70px; }
         <div class="table-tools" id="tasks-tools"></div>
         <p class="task-view-note" id="task-view-note"></p>
         <div id="task-table-view">
+        <button type="button" id="mobile-quick-add" class="btn btn-ghost" style="display:none" aria-expanded="false" aria-controls="main-task-body" onclick="toggleMobileQuickAdd()">Quick Add</button>
         <div class="task-selection-tools" id="task-selection-tools" hidden></div>
         <div class="task-wrap"><table class="task-table"><thead><tr><th></th><th>Task / Brief</th><th>Brands</th><th>Type</th><th>Assigned</th><th>Due</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody id="main-task-body"></tbody></table></div>
         </div>
+        <p id="mobile-board-hint" class="panel-note" style="display:none" hidden>Swipe across columns. Use a card's Move to menu to change its status.</p>
         <div class="task-board" id="task-board" aria-label="Tasks by status" hidden></div>
         <p class="sr-only" id="task-board-message" role="status" aria-live="polite"></p>
       </div>

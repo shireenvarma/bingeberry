@@ -107,6 +107,25 @@ After migration and deployment, test with an admin, manager, approved team membe
 - No archive view or manual cleanup is needed. The legacy `archived_at` database column is retained for compatibility but does not exempt a task from deletion. Deletion removes task briefs and reference links, not external Pinterest/Drive content. No social publishing, client-sharing, or approval automation is added by this Board update.
 - The detail panel is a separate native-dialog UI module with mobile styling, focus restoration, draft protection, and optimistic conflict detection.
 
+## Mobile Layout
+
+Phone-specific styles live in `mobile.css`, loaded only at widths up to 640px.
+Desktop styling remains unchanged. Phones use labeled task cards, collapsible
+filters and Quick Add, swipeable Board/week columns, persistent month controls,
+single-column forms, safe-area spacing, and a compact floating timer. Team
+members still use normal Add Task; all existing task permissions remain in force.
+Mobile navigation has a backdrop, close/Escape support, focus trapping, and
+background isolation; resizing back to desktop removes its mobile state.
+
+Run `npm test` for DOM/database tests and `npm run test:mobile` for isolated Chrome
+layout tests. The browser suite uses touch emulation at 320/390/430/640px and
+desktop geometry/screenshot comparisons at 641/1280/1440px. It substitutes local
+sample data and Auth responses; it never contacts the live database. It covers
+all pages, task movement, draft preservation, edit forms, Auth, and timers.
+Google Chrome must be installed; alternatively install Playwright Chromium with
+`npx playwright install chromium` and run `BROWSER_CHANNEL=chromium npm run test:mobile`.
+The mobile update adds no database migration and does not change task retention.
+
 ## Next Product Phase: Social Planner (Proposal)
 
 The next feature to design is an agency social-content calendar, before task comments,
